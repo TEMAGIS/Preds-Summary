@@ -262,16 +262,24 @@
     position: absolute; top: 12px; left: 140px; z-index: 690;
     width: 36px; height: 36px;
     background: var(--tema-blue); color: white; border: 1px solid var(--tema-blue);
-    border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    border-radius: 8px; display: flex; align-items: center; justify-content: center; gap: 6px;
     cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    transition: background 0.15s, color 0.15s;
+    font-size: 12px; font-weight: 700; font-family: 'DM Sans', sans-serif; white-space: nowrap;
+    transition: background 0.15s, color 0.15s, width 0.15s, padding 0.15s;
   }
   #layers-toggle:hover { background: #003a8c; }
   #layers-toggle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   /* Lit up like an active filter pill whenever a boundary layer is showing,
      so the button itself hints at "something is on" even with the menu
-     closed. */
-  #layers-toggle.has-layer { background: #fff; color: var(--tema-blue); border-color: #fff; }
+     closed — and grows from icon-only to icon+name, same idea as
+     #basemap-toggle's own label, so the active layer is readable at a
+     glance without opening the popover. */
+  #layers-toggle.has-layer {
+    width: auto; padding: 7px 11px;
+    background: #fff; color: var(--tema-blue); border-color: #fff;
+  }
+  .layers-label { display: none; }
+  #layers-toggle.has-layer .layers-label { display: inline; }
   #layers-menu {
     position: absolute; top: 54px; left: 12px; z-index: 695;
     background: var(--surface); border-radius: var(--radius-sm);
@@ -622,6 +630,7 @@
     </button>
     <button id="layers-toggle" type="button" onclick="toggleLayersMenu()" aria-expanded="false" aria-controls="layers-menu" aria-label="Choose a map boundary layer">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 21 7 12 12 3 7 12 2"/><polyline points="3 12 12 17 21 12"/><polyline points="3 17 12 22 21 17"/></svg>
+      <span class="layers-label"></span>
     </button>
     <div id="layers-menu" role="group" aria-label="Map boundary layers" hidden></div>
     <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
@@ -866,8 +875,8 @@ const BOUNDARY_LAYERS = {
     tokenRequired:  true,
   },
   congress: {
-    label:          'US Congressional Districts',
-    shortLabel:     'US Congressional',
+    label:          'TN Congressional Districts',
+    shortLabel:     'TN Congressional',
     unitLabel:      'district',
     url:            'https://services1.arcgis.com/kILp9lqGUeOhnDbI/arcgis/rest/services/TN_Congressional_Districts_Update/FeatureServer/0',
     idField:        'DISTRICT',
@@ -1655,6 +1664,7 @@ let activeBoundary = null;        // null | 'house' | 'senate' | 'congress' | 't
 let boundaryLayerGroup = null;    // the single Leaflet layer currently on the map for it
 let boundaryFullCache = {};       // key -> already-fetched GeoJSON FeatureCollection (house/senate/congress only — tract is viewport-scoped and never fully cached)
 let boundaryMoveHandler = null;   // bound map 'moveend' listener while the tract layer is active; removed when switched away
+let boundaryLabelMoveHandler = null; // bound map 'moveend' listener that re-centers on-map labels for a 'full'-mode layer (house/senate/congress) on whatever's currently visible — see repositionBoundaryLabels()
 let boundaryFetchToken = 0;       // bumped on every layer switch so a slow, now-stale fetch can't clobber a newer selection
 let renderedList = [];
 let refreshTimer = null;
@@ -2037,6 +2047,7 @@ function setBoundaryHint(show, text, isError) {
 function clearBoundaryLayer() {
   if (boundaryLayerGroup) { map.removeLayer(boundaryLayerGroup); boundaryLayerGroup = null; }
   if (boundaryMoveHandler) { map.off('moveend', boundaryMoveHandler); boundaryMoveHandler = null; }
+  if (boundaryLabelMoveHandler) { map.off('moveend', boundaryLabelMoveHandler); boundaryLabelMoveHandler = null; }
   setBoundaryHint(false);
 }
 function clearBoundaryFilter() {
@@ -2046,8 +2057,7 @@ function clearBoundaryFilter() {
   activeBoundary = null;
   clearBoundaryLayer();
   updateActiveFilterBar();
-  const layersBtn = document.getElementById('layers-toggle');
-  if (layersBtn) layersBtn.classList.remove('has-layer');
+  updateLayersToggleLabel(null);
 }
 // key is null for "None", otherwise one of BOUNDARY_LAYERS' keys.
 async function setBoundaryLayer(el, key) {
@@ -2056,11 +2066,22 @@ async function setBoundaryLayer(el, key) {
   activeBoundary = key;
   clearBoundaryLayer();
   updateActiveFilterBar();
-  const layersBtn = document.getElementById('layers-toggle');
-  if (layersBtn) layersBtn.classList.toggle('has-layer', !!key);
+  updateLayersToggleLabel(key);
   // Closes on selection, matching setFilter()/setBuffer() above.
   toggleLayersMenu(true);
   if (key) await showBoundaryLayer(key);
+}
+// Shows the active boundary layer's name next to the #layers-toggle icon
+// (mirrors #basemap-toggle's own label) instead of leaving the button
+// icon-only once something is selected — key is null/falsy for "None".
+function updateLayersToggleLabel(key) {
+  const btn = document.getElementById('layers-toggle');
+  if (!btn) return;
+  const cfg = key && BOUNDARY_LAYERS[key];
+  btn.classList.toggle('has-layer', !!cfg);
+  const label = btn.querySelector('.layers-label');
+  if (label) label.textContent = cfg ? cfg.shortLabel : '';
+  btn.setAttribute('aria-label', cfg ? `Map boundary layer: ${cfg.shortLabel}. Choose a different one.` : 'Choose a map boundary layer');
 }
 // Fetches (if needed) and renders the given boundary layer. Two modes:
 //  - 'full' (House/Senate/Congress): the whole layer is small (9–99
@@ -2219,6 +2240,47 @@ function renderBoundaryFeatureCollection(fc, cfg) {
       });
     },
   }).addTo(map);
+  // Full-mode layers (House/Senate/Congress) are fetched once and never
+  // re-rendered while panning/zooming, so a label bound at its feature's
+  // full-extent center (Leaflet's default for `direction: 'center'`) can
+  // end up off-screen once the user zooms into just part of a large
+  // district — Senate districts especially, being the largest of the
+  // three (only 33 covering the whole state). Viewport-mode Census
+  // Tracts don't need this: that layer already re-fetches and rebinds
+  // fresh tooltips on every pan/zoom, so its labels are never stale.
+  if (cfg.mode === 'full') {
+    repositionBoundaryLabels();
+    if (!boundaryLabelMoveHandler) {
+      boundaryLabelMoveHandler = repositionBoundaryLabels;
+      map.on('moveend', boundaryLabelMoveHandler);
+    }
+  }
+}
+// Re-centers every visible feature's on-map label on the visible portion
+// of that feature, instead of leaving it at the feature's full-extent
+// center (which can be scrolled off-screen once zoomed into just part of
+// a large district/tract). Approximates "visible portion" as the
+// intersection of the feature's own bounding box with the current map
+// viewport — not the true visible polygon area, but a close, cheap
+// stand-in that needs no geometry library, and matches the original
+// (unclamped) label position exactly whenever the whole feature is
+// already on screen. Skips a feature that isn't on screen at all right
+// now — Leaflet already doesn't render an off-screen tooltip, so leaving
+// its last position alone is harmless.
+function repositionBoundaryLabels() {
+  if (!boundaryLayerGroup || !map) return;
+  const mapBounds = map.getBounds();
+  boundaryLayerGroup.eachLayer(layer => {
+    const tooltip = layer.getTooltip && layer.getTooltip();
+    if (!tooltip) return;
+    const fb = layer.getBounds();
+    const south = Math.max(fb.getSouth(), mapBounds.getSouth());
+    const north = Math.min(fb.getNorth(), mapBounds.getNorth());
+    const west  = Math.max(fb.getWest(),  mapBounds.getWest());
+    const east  = Math.min(fb.getEast(),  mapBounds.getEast());
+    if (south > north || west > east) return;
+    tooltip.setLatLng(L.latLng((south + north) / 2, (west + east) / 2));
+  });
 }
 // ── Point-at-a-location lookup (detail sheet's Legislative/Census
 //    Summary sections) ──────────────────────────────────────────────
