@@ -253,20 +253,48 @@
   #basemap-toggle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   #fab-locate:hover { transform: scale(1.08); }
   #fab-locate:active { transform: scale(0.95); }
-  #map-offline-badge {
-    position: absolute; bottom: 14px; left: 12px; z-index: 690;
-    max-width: calc(100% - 78px);
-    background: #fdeed3; color: #6b4200; border: 1px solid #d4920a;
-    border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 700;
-    font-family: 'DM Sans', sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  /* Independently positioned from #basemap-toggle on purpose — see the
+     comment above #basemap-toggle about the historical z-index/overlap
+     bugs there. This button gets its own fixed offset (left: 140px)
+     rather than being laid out relative to the basemap toggle, so future
+     changes to one can't accidentally shift the other. */
+  #layers-toggle {
+    position: absolute; top: 12px; left: 140px; z-index: 690;
+    width: 36px; height: 36px;
+    background: var(--tema-blue); color: white; border: 1px solid var(--tema-blue);
+    border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    transition: background 0.15s, color 0.15s;
   }
-  /* Applied to #map-container while setMapOfflineState(true) is active —
-     see the OFFLINE MAP TILE CACHING section. Desaturates/dims only the
-     tile layers (not markers/popups/controls) so a cached, possibly-stale
-     map still reads clearly, rather than looking identical to a live one
-     or, worse, showing blank tiles once panning/zooming runs past what's
-     actually cached. */
-  #map-container.map-degraded .leaflet-tile-pane { filter: grayscale(55%) brightness(0.9) sepia(8%); }
+  #layers-toggle:hover { background: #003a8c; }
+  #layers-toggle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  /* Lit up like an active filter pill whenever a boundary layer is showing,
+     so the button itself hints at "something is on" even with the menu
+     closed. */
+  #layers-toggle.has-layer { background: #fff; color: var(--tema-blue); border-color: #fff; }
+  #layers-menu {
+    position: absolute; top: 54px; left: 12px; z-index: 695;
+    background: var(--surface); border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg); border: 1px solid var(--border);
+    padding: 8px; display: flex; flex-direction: column; gap: 4px;
+    min-width: 168px;
+  }
+  #layers-menu[hidden] { display: none; }
+  #layers-menu .layers-menu-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text3); padding: 2px 6px 4px; font-family: 'DM Sans', sans-serif;
+  }
+  /* .bndt here is the same JS-selector class setBoundaryLayer()/
+     clearBoundaryFilter() already target (see the .buft/.bndt comment
+     above) — these overrides just restyle it for a light popover surface
+     instead of the dark filter-drawer context it also appears in. */
+  #layers-menu .bndt {
+    display: block; width: 100%; text-align: left;
+    background: var(--surface2); color: var(--text); border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm); padding: 7px 10px;
+  }
+  #layers-menu .bndt:hover { background: var(--border); }
+  #layers-menu .bndt.active { background: var(--tema-blue); color: #fff; border-color: var(--tema-blue); }
   /* ── List ────────────────────────────────────────────────── */
   #list-section { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
   .list-controls { position: sticky; top: 0; z-index: 10; background: var(--bg); box-shadow: 0 1px 0 rgba(0,0,0,0.04); }
@@ -274,7 +302,6 @@
   .header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
   .list-count { font-size: 12px; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: 0.6px; }
   #last-refreshed { font-size: 11px; color: var(--text3); font-family: 'DM Mono', monospace; margin-top: 2px; }
-  #tile-cache-status { font-size: 11px; color: var(--tema-blue); font-weight: 700; margin-top: 2px; }
   .stale-badge { display: inline-block; background: #fdeed3; color: #6b4200; border: 1px solid #d4920a; padding: 1px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; margin-left: 4px; vertical-align: 2px; }
   #asset-list { display: flex; flex-direction: column; padding: 0 0 80px; }
   /* ── Card ────────────────────────────────────────────────── */
@@ -593,10 +620,13 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
       <span class="basemap-label">Hybrid</span>
     </button>
+    <button id="layers-toggle" type="button" onclick="toggleLayersMenu()" aria-expanded="false" aria-controls="layers-menu" aria-label="Choose a map boundary layer">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 21 7 12 12 3 7 12 2"/><polyline points="3 12 12 17 21 12"/><polyline points="3 17 12 22 21 17"/></svg>
+    </button>
+    <div id="layers-menu" role="group" aria-label="Map boundary layers" hidden></div>
     <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
     </button>
-    <div id="map-offline-badge" role="status" aria-live="polite" hidden>📡 Offline — showing cached map</div>
     <div id="boundary-hint" role="status" aria-live="polite" hidden></div>
   </div>
   <main id="list-section" aria-label="Damage assessments">
@@ -605,7 +635,6 @@
         <div>
           <div class="list-count" id="list-count" aria-live="polite">Loading…</div>
           <div id="last-refreshed" aria-live="polite"></div>
-          <div id="tile-cache-status" aria-live="polite" hidden></div>
         </div>
         <div class="header-actions">
           <button id="filter-toggle-btn" class="filter-btn" onclick="toggleFilterDrawer()" aria-expanded="false" aria-controls="filter-drawer">
@@ -1379,11 +1408,6 @@ async function fetchAssets() {
     setOfflineBanner(false);
     cacheData(assets);
     applyMissionsAndRender(false);
-    // Covers assessments added since the last fetch (including the 5-min
-    // auto-refresh) — already-warmed ones are filtered out inside
-    // scheduleTileWarm() itself, so this is cheap to call every time, not
-    // just right after a mission is picked. See "OFFLINE MAP TILE CACHING".
-    scheduleTileWarm(scopedAssets());
   } catch (err) {
     console.error('Fetch failed:', err);
     setLoadingState(false);
@@ -1755,9 +1779,6 @@ function selectMissionFromScreen(key) {
   refreshMarkers();
   renderList();
   setTimeout(fitToScopedAssets, 60);
-  // Fire-and-forget: queue offline-cache warming for this mission's
-  // assessments. Never blocks the UI — see "OFFLINE MAP TILE CACHING" above.
-  scheduleTileWarm(scopedAssets());
 }
 function scopedAssets() {
   if (activeMission === 'all') return assets;
@@ -1773,9 +1794,7 @@ const FIT_ALL_MAX_ZOOM = 14;
 // also had an on-map "Fit all" button wired to this for calling it on
 // demand; removed the same day per feedback that it took up too much
 // space on the map — this function is still used for the automatic
-// mission-load fit, and FIT_ALL_MAX_ZOOM still feeds the offline tile
-// cache's "overview zoom" (see "OFFLINE MAP TILE CACHING" below), just
-// with no manual trigger anymore.
+// mission-load fit, just with no manual trigger anymore.
 function fitToScopedAssets() {
   if (!map) return;
   const list = scopedAssets();
@@ -1821,24 +1840,56 @@ function buildFilterGrid() {
   const bufferBtns = BUFFER_OPTIONS.map(o => `
     <button class="buft ${o.miles === null ? 'active' : ''}" data-miles="${o.miles === null ? '' : o.miles}"
       aria-pressed="${o.miles === null ? 'true' : 'false'}" onclick="setBuffer(this, ${o.miles === null ? 'null' : o.miles})">${o.label}</button>`).join('');
-  // Boundary layer row — same one-at-a-time pill pattern as the distance
-  // row above and the same .buf-row layout, but its own .bndt class (see
-  // the CSS comment above .buft/.bndt for why they're not just one class)
-  // so setBuffer()'s global `.buft` reset can't touch these pills. "None"
-  // comes first so there's always an explicit way back to no boundary
-  // shown. Only one of the 4 layers can be on the map at a time, per user
-  // decision — picking a new one always replaces whatever was showing.
-  const boundaryNoneBtn = `
-    <button class="bndt active" data-boundary="" aria-pressed="true" onclick="setBoundaryLayer(this, null)">None</button>`;
-  const boundaryBtns = Object.entries(BOUNDARY_LAYERS).map(([key, cfg]) => `
-    <button class="bndt" data-boundary="${key}" aria-pressed="false" onclick="setBoundaryLayer(this, '${key}')">${cfg.shortLabel}</button>`).join('');
   document.getElementById('filter-grid').innerHTML = `
     <div class="fg-row" role="group" aria-label="Filter by damage level, select one or more">${allBtn}${others}</div>
     <div class="buf-label">Distance from me</div>
-    <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>
-    <div class="buf-label">Map boundaries</div>
-    <div class="buf-row" role="group" aria-label="Show a boundary layer on the map">${boundaryNoneBtn}${boundaryBtns}</div>`;
+    <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>`;
 }
+// Boundary layer picker now lives in its own on-map popover (see
+// #layers-toggle/#layers-menu) rather than the filter drawer — moved out
+// of buildFilterGrid() 2026-08-31 per user request to streamline this
+// build and give boundary-layer toggling a more discoverable, map-adjacent
+// home next to the basemap toggle. Same one-at-a-time pill pattern as
+// before, and still the .bndt class (see the CSS comment above .buft/.bndt
+// for why it's kept separate from .buft) so setBuffer()'s global `.buft`
+// reset still can't touch these pills. "None" comes first so there's
+// always an explicit way back to no boundary shown — only one of the 4
+// layers can be on the map at a time, per user decision.
+function buildLayersMenu() {
+  const noneBtn = `
+    <button class="bndt active" data-boundary="" aria-pressed="true" onclick="setBoundaryLayer(this, null)">None</button>`;
+  const layerBtns = Object.entries(BOUNDARY_LAYERS).map(([key, cfg]) => `
+    <button class="bndt" data-boundary="${key}" aria-pressed="false" onclick="setBoundaryLayer(this, '${key}')">${cfg.shortLabel}</button>`).join('');
+  document.getElementById('layers-menu').innerHTML = `
+    <div class="layers-menu-label">Map boundaries</div>${noneBtn}${layerBtns}`;
+}
+// Mirrors toggleFilterDrawer() below, but for the boundary-layer popover.
+// Kept as a separate function (rather than generalizing toggleFilterDrawer)
+// since the two have different open/close mechanics (hidden attribute vs.
+// max-height) and different toggle buttons/aria wiring.
+function toggleLayersMenu(forceClose = false) {
+  const menu = document.getElementById('layers-menu');
+  const btn  = document.getElementById('layers-toggle');
+  const isOpen = !menu.hidden;
+  if (forceClose || isOpen) {
+    menu.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  } else {
+    menu.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+  }
+}
+// Closes the layers menu on an outside click/tap, same convenience as
+// dismissing any other popover — doesn't fire on a click on the toggle
+// button itself (that has its own open/close handling) or inside the
+// menu (picking a layer already closes it via setBoundaryLayer()).
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('layers-menu');
+  const btn  = document.getElementById('layers-toggle');
+  if (!menu || menu.hidden) return;
+  if (menu.contains(e.target) || btn.contains(e.target)) return;
+  toggleLayersMenu(true);
+});
 function toggleFilterDrawer(forceClose = false) {
   const drawer = document.getElementById('filter-drawer');
   const btn    = document.getElementById('filter-toggle-btn');
@@ -1995,6 +2046,8 @@ function clearBoundaryFilter() {
   activeBoundary = null;
   clearBoundaryLayer();
   updateActiveFilterBar();
+  const layersBtn = document.getElementById('layers-toggle');
+  if (layersBtn) layersBtn.classList.remove('has-layer');
 }
 // key is null for "None", otherwise one of BOUNDARY_LAYERS' keys.
 async function setBoundaryLayer(el, key) {
@@ -2003,8 +2056,10 @@ async function setBoundaryLayer(el, key) {
   activeBoundary = key;
   clearBoundaryLayer();
   updateActiveFilterBar();
+  const layersBtn = document.getElementById('layers-toggle');
+  if (layersBtn) layersBtn.classList.toggle('has-layer', !!key);
   // Closes on selection, matching setFilter()/setBuffer() above.
-  toggleFilterDrawer(true);
+  toggleLayersMenu(true);
   if (key) await showBoundaryLayer(key);
 }
 // Fetches (if needed) and renders the given boundary layer. Two modes:
@@ -2551,7 +2606,7 @@ const BASEMAPS = {
         // this service's own tileInfo), but unlike World_Imagery/
         // World_Street_Map it isn't actually rendered/cached that deep
         // everywhere — it's inconsistent by area, deeper in dense urban
-        // cores, shallower elsewhere. 16 matches TILE_WARM_ZOOM (this
+        // cores, shallower elsewhere. 16 matches DEFAULT_SELECT_ZOOM (this
         // app's own "normal detail" zoom for a selected assessment), so
         // real tiles are guaranteed at the zoom the app already zooms to
         // by default; past that, Leaflet just scales up the z16 tile
@@ -2622,14 +2677,6 @@ function applyBasemap(key) {
       attribution:   spec.attribution || '',
     }).addTo(map);
     basemapLayers.push(layer);
-    // Wire offline detection to the base imagery layer only (index 0). The
-    // label/road reference overlays legitimately 404 over water and sparse
-    // rural areas even when fully online, so counting their errors would
-    // false-trigger "offline" in perfectly normal use.
-    if (i === 0) {
-      layer.on('tileerror', onBasemapTileError);
-      layer.on('tileload', onBasemapTileLoad);
-    }
   });
   currentBasemap = key;
   // Update the toggle button label to show what the *next* tap will do
@@ -2645,332 +2692,9 @@ function toggleBasemap() {
   applyBasemap(currentBasemap === 'streets' ? 'hybrid' : 'streets');
 }
 
-// ── Degraded / offline map-tile state ───────────────────────────
-// Distinguishes "only cached tiles are available right now" from normal
-// operation and actually shows it, instead of leaving unfetchable tiles
-// blank: a badge over the map, a light desaturation on the tile layer so
-// a cached view visibly reads as "not live," and a temporary cap on how
-// far the map will zoom. That cap matters because TILE_WARM_ZOOM is the
-// deepest zoom guaranteed to be proactively cached (see scheduleTileWarm
-// below — a compact mission's whole extent gets cached this deep, and even
-// the large-mission fallback path always covers at least this zoom) —
-// letting someone zoom in further while offline just trades a fully blank
-// screen for a partially blank one, one tile at a time. Both the badge and
-// the cap lift automatically the moment a tile loads successfully again.
-const FULL_TILE_MAX_ZOOM = 19; // matches every BASEMAPS layer's maxZoom
-let mapTilesOffline = false;
-let tileErrorStreak = 0;
-const TILE_ERROR_STREAK_THRESHOLD = 3; // one or two blocked requests can be transient; a streak is a real signal
-function onBasemapTileError() {
-  tileErrorStreak++;
-  if (tileErrorStreak >= TILE_ERROR_STREAK_THRESHOLD) setMapOfflineState(true);
-}
-function onBasemapTileLoad() {
-  tileErrorStreak = 0;
-  setMapOfflineState(false);
-}
-function setMapOfflineState(offline) {
-  if (offline === mapTilesOffline) return;
-  mapTilesOffline = offline;
-  const container = document.getElementById('map-container');
-  if (container) container.classList.toggle('map-degraded', offline);
-  const badge = document.getElementById('map-offline-badge');
-  if (badge) badge.hidden = !offline;
-  if (offline) {
-    if (map.getZoom() > TILE_WARM_ZOOM) map.setZoom(TILE_WARM_ZOOM);
-    map.setMaxZoom(TILE_WARM_ZOOM);
-  } else {
-    map.setMaxZoom(FULL_TILE_MAX_ZOOM);
-  }
-}
-// Browser connectivity events fire immediately on airplane-mode toggle —
-// faster than waiting for a tile request to actually time out — so use
-// them as a fast path, with the tile-error streak above as a fallback for
-// the "reports online but nothing actually loads" case (e.g. a wifi
-// network with no real internet behind it).
-window.addEventListener('offline', () => setMapOfflineState(true));
-window.addEventListener('online', () => {
-  tileErrorStreak = 0;
-  setMapOfflineState(false);
-  // A location that fell back to "last known" while offline is worth
-  // re-checking now that we might actually have a fresh fix again.
-  if (userLocationStale) requestLocation();
-});
-
-// ════════════════════════════════════════════════════════════════
-//  OFFLINE MAP TILE CACHING
-// ════════════════════════════════════════════════════════════════
-//  Scoped design, see app-notes: two tiers, both backed by the SAME
-//  service-worker cache (sw.js) so there's one code path, not two.
-//
-//  Tier 1 — "cache what's been seen": sw.js transparently caches every
-//  Hybrid-basemap (aerial imagery + reference overlays) tile the app
-//  actually loads while online, and serves it back if that exact tile is
-//  requested again while offline. That's automatic just from panning/
-//  zooming; nothing below is needed for it.
-//
-//  Tier 2 — proactive fallback, reworked 2026-08-12 from "a small radius
-//  around each individual assessment" to "the WHOLE current mission's
-//  extent, at two zooms": the default per-assessment zoom (TILE_WARM_ZOOM)
-//  and the "fit all assessments" overview zoom (FIT_ALL_MAX_ZOOM-capped,
-//  see fitToScopedAssets() — runs automatically on mission load; the
-//  on-map button that once called it on demand was removed for taking up
-//  too much space, see app-notes). Caching the actual bounding box instead
-//  of separate circles per site also closes
-//  the gaps a user would previously hit while panning BETWEEN two nearby
-//  assessments, which the old per-point design left uncached. Both zooms
-//  get fetched via scheduleTileWarm()/runTileWarm() below, one Hybrid
-//  layer-fetch per tile per zoom, landing in the exact same sw.js-managed
-//  cache as tier 1 — this code never touches the Cache API directly.
-//
-//  Safety valve: caching a mission's ENTIRE extent at the detail zoom only
-//  stays affordable for a geographically compact mission — tile count
-//  grows with the physical area covered, and TN PDA missions can in
-//  principle span a whole county or region after a large event (this is
-//  literally why the original whole-county design got replaced with a
-//  per-point one back on 2026-08-08). So: if the mission's extent at
-//  TILE_WARM_ZOOM would exceed TILE_WARM_EXTENT_TILE_CAP tiles, this falls
-//  back to the OLD per-point approach instead (a tight radius around just
-//  the TILE_WARM_MAX_ASSETS closest assessments, across TILE_WARM_ZOOM_RANGE
-//  for some cluster-reveal slack) rather than trying to cache the whole
-//  (possibly enormous) area. The overview zoom is always cached in full
-//  regardless — being more zoomed out, it stays cheap no matter how
-//  physically large the mission is.
-//
-//  Runs incrementally, not just once per mission: scheduleTileWarm() is
-//  called (a) right after a mission is picked, and (b) at the end of every
-//  successful fetchAssets() — including the 5-min auto-refresh — for
-//  whatever assets are currently in scope. Both are cheap even when
-//  nothing's new, since tile-level dedup (warmedTileKeys) and, in the
-//  per-point fallback, asset-level dedup (warmedAssetKeys) skip anything
-//  already warmed — so a new assessment logged by another field user while
-//  this device still has service gets its own area covered automatically,
-//  without anyone needing to reselect the mission or do anything else.
-//
-//  Kept deliberately gentle in the background so this never makes the app
-//  feel slow or locked up right after loading, while there's still
-//  service: each warm batch is fire-and-forget (never awaited by anything
-//  that blocks rendering), waits TILE_WARM_START_DELAY_MS before starting
-//  so foreground map/list/asset-data traffic gets a head start on the
-//  connection, runs at a modest concurrency (TILE_WARM_CONCURRENCY), and
-//  multiple calls queue behind each other (tileWarmQueue) instead of all
-//  firing at once and competing for bandwidth.
-//
-//  Hybrid (aerial) is the only basemap that gets cached, per the field
-//  team's preference for aerial imagery — Streets (CARTO) tiles are not
-//  cached at all. See app-notes.md "Map tile caching" for the full history.
-
-function lonLatToTileXY(lon, lat, z) {
-  const latRad = lat * Math.PI / 180;
-  const n = Math.pow(2, z);
-  const x = Math.floor((lon + 180) / 360 * n);
-  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
-  return { x, y };
-}
-// Tiles covering a square bounding box of side ~2*radiusMiles centered on
-// (lat, lng) — a simple bounding box, not a precise circle, since this only
-// needs to pick "which tiles to prefetch," not render an exact boundary.
-// Longitude-degrees-per-mile shrinks with latitude (meridians converge
-// toward the poles), so the longitude delta is corrected by cos(latitude);
-// the latitude delta doesn't need that correction. Used only by the
-// per-point FALLBACK path now — see TILE_WARM_EXTENT_TILE_CAP above.
-function tilesForPointRadius(lat, lng, radiusMiles, z) {
-  const dLat = radiusMiles / 69.0; // ~69 miles per degree of latitude, roughly constant
-  const cos = Math.cos(lat * Math.PI / 180);
-  const dLng = radiusMiles / (69.0 * (cos || 1));
-  const nw = lonLatToTileXY(lng - dLng, lat + dLat, z);
-  const se = lonLatToTileXY(lng + dLng, lat - dLat, z);
-  const minX = Math.min(nw.x, se.x), maxX = Math.max(nw.x, se.x);
-  const minY = Math.min(nw.y, se.y), maxY = Math.max(nw.y, se.y);
-  const tiles = [];
-  for (let x = minX; x <= maxX; x++) {
-    for (let y = minY; y <= maxY; y++) tiles.push({ x, y, z });
-  }
-  return tiles;
-}
-// Tiles covering an L.LatLngBounds rectangle at a given zoom — the
-// whole-extent counterpart to tilesForPointRadius above.
-function tilesForBounds(bounds, z) {
-  const nw = lonLatToTileXY(bounds.getWest(), bounds.getNorth(), z);
-  const se = lonLatToTileXY(bounds.getEast(), bounds.getSouth(), z);
-  const minX = Math.min(nw.x, se.x), maxX = Math.max(nw.x, se.x);
-  const minY = Math.min(nw.y, se.y), maxY = Math.max(nw.y, se.y);
-  const tiles = [];
-  for (let x = minX; x <= maxX; x++) {
-    for (let y = minY; y <= maxY; y++) tiles.push({ x, y, z });
-  }
-  return tiles;
-}
-// Cheap tile-COUNT estimate for a bounds+zoom without building the actual
-// list — used to decide, before doing any real work, whether caching the
-// mission's whole extent at TILE_WARM_ZOOM is affordable (see
-// TILE_WARM_EXTENT_TILE_CAP) without ever materializing a huge array.
-function tileCountEstimate(bounds, z) {
-  const nw = lonLatToTileXY(bounds.getWest(), bounds.getNorth(), z);
-  const se = lonLatToTileXY(bounds.getEast(), bounds.getSouth(), z);
-  return (Math.abs(se.x - nw.x) + 1) * (Math.abs(se.y - nw.y) + 1);
-}
-// The zoom fitBounds()/fitToScopedAssets() would actually land the map at
-// for a given extent, capped the same way that function caps (see
-// FIT_ALL_MAX_ZOOM) — kept in lockstep so whatever gets proactively cached
-// for the "big picture" view always matches what the Fit All button
-// actually shows, rather than drifting out of sync with a separate guess.
-function overviewZoomFor(bounds) {
-  if (!map || !bounds.isValid()) return FIT_ALL_MAX_ZOOM;
-  const raw = map.getBoundsZoom(bounds, false, [40, 40]);
-  return Math.max(3, Math.min(raw, FIT_ALL_MAX_ZOOM));
-}
-
-const TILE_WARM_ZOOM = 16; // default per-assessment zoom — see selectAsset() and setMapOfflineState()
-// Tile-count ceiling for caching a mission's WHOLE extent at TILE_WARM_ZOOM
-// (2026-08-12) — see the safety-valve note above. 600 tiles is roughly a
-// mission whose assessments span up to ~7-8 miles across (varies with
-// latitude and the extent's shape) — comfortably a single town/local damage
-// survey, which is the common case this is meant to optimize for. Wider
-// than that and this falls back to the old per-point approach instead of
-// trying to cache the whole area.
-const TILE_WARM_EXTENT_TILE_CAP = 600;
-// Fallback-path-only constants below (used when a mission's extent exceeds
-// the cap above): a tight radius around just the closest few assessments,
-// across a small zoom range for cluster-reveal slack — the exact design
-// this app used before whole-extent caching existed. See app-notes.md.
-const POINT_CACHE_RADIUS_MILES = 0.5;
-const TILE_WARM_ZOOM_RANGE = [15, 16, 17];
-const TILE_WARM_MAX_ASSETS = 50;
-const TILE_WARM_CONCURRENCY = 4;
-const TILE_WARM_START_DELAY_MS = 4000; // let foreground map/list/asset traffic get a head start on the connection first
-let tileWarmQueue = Promise.resolve(); // serializes warm batches so overlapping calls don't compete for bandwidth
-const warmedAssetKeys = new Set();     // OBJECTIDs already queued for warming this session (fallback path only)
-const warmedTileKeys = new Set();      // "z/x/y" tiles already fetched this session (both paths)
-// Fills in an Esri tile URL template's {z}/{y}/{x} placeholders for one tile.
-function fillArcgisTileUrl(template, t) {
-  return template.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x);
-}
-// Small status line shown near "Updated HH:MM" in the list header so there's
-// SOME visible signal for whether it's actually safe to go offline yet —
-// added after a report of going into airplane mode right after loading the
-// map and getting a blank basemap, because the warm was still silently in
-// progress (or hadn't even started) with nothing telling the user that.
-function setTileCacheStatus(text, autoHideMs) {
-  const el = document.getElementById('tile-cache-status');
-  if (!el) return;
-  clearTimeout(setTileCacheStatus._t);
-  if (!text) { el.hidden = true; return; }
-  el.textContent = text;
-  el.hidden = false;
-  if (autoHideMs) setTileCacheStatus._t = setTimeout(() => { el.hidden = true; }, autoHideMs);
-}
-// Resolves once a service worker is actually active and controlling this
-// page, or `false` if that doesn't happen within `timeoutMs` (e.g.
-// registration failed, or the browser is still installing it). Warming the
-// cache before a worker is actively controlling the page would just waste
-// battery/data on fetches that never get intercepted/cached.
-function waitForServiceWorkerReady(timeoutMs) {
-  if (!('serviceWorker' in navigator)) return Promise.resolve(false);
-  return Promise.race([
-    navigator.serviceWorker.ready.then(() => true),
-    new Promise(resolve => setTimeout(() => resolve(false), timeoutMs)),
-  ]);
-}
-// Entry point: call with any list of assets (a freshly-picked mission's
-// assets, or the current mission scope after any fetchAssets(), including
-// the auto-refresh timer) whenever there's a chance to cache their
-// surroundings. Safe to call repeatedly — the real work (bounds/zoom math,
-// deciding whole-extent vs. fallback, the actual fetches) happens inside
-// runTileWarm(), queued rather than run immediately, and every path dedups
-// against what's already been warmed, so a call that finds nothing new to
-// do is cheap.
-function scheduleTileWarm(assetList) {
-  if (!('serviceWorker' in navigator) || !map) return;
-  const candidates = (assetList || []).filter(a => a && Number.isFinite(a.lat) && Number.isFinite(a.lng));
-  if (!candidates.length) return;
-  const bounds = L.latLngBounds(candidates.map(a => [a.lat, a.lng]));
-  if (!bounds.isValid()) return;
-  tileWarmQueue = tileWarmQueue.then(() => runTileWarm(candidates, bounds)).catch(() => {});
-}
-async function runTileWarm(assetList, bounds) {
-  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
-  // Give foreground work (initial map tiles, the asset list fetch, any
-  // attachment thumbnails) a head start on the connection before this
-  // background batch starts competing for bandwidth.
-  await new Promise(resolve => setTimeout(resolve, TILE_WARM_START_DELAY_MS));
-  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return; // could've gone offline during the delay
-
-  const tileSet = new Map();
-  const addTiles = (list) => list.forEach(t => {
-    const key = `${t.z}/${t.x}/${t.y}`;
-    if (!warmedTileKeys.has(key)) tileSet.set(key, t);
-  });
-
-  // Overview zoom: always the WHOLE mission extent. Cheap regardless of how
-  // physically large the mission is — the more zoomed out, the fewer/
-  // bigger tiles cover the same ground — and it's what makes the "Fit all"
-  // big-picture view work offline too, not just the per-assessment one.
-  addTiles(tilesForBounds(bounds, overviewZoomFor(bounds)));
-
-  if (tileCountEstimate(bounds, TILE_WARM_ZOOM) <= TILE_WARM_EXTENT_TILE_CAP) {
-    // Compact mission — cache its ENTIRE extent at the default
-    // per-assessment zoom too. This also closes the gaps between
-    // individual assessments that the old point-radius-only design left
-    // blank when panning between nearby sites.
-    addTiles(tilesForBounds(bounds, TILE_WARM_ZOOM));
-  } else {
-    // Mission spans too much ground to affordably cache the whole extent
-    // at this depth — fall back to a tight radius around just the closest
-    // TILE_WARM_MAX_ASSETS assessments, across TILE_WARM_ZOOM_RANGE for
-    // some cluster-reveal slack (the design this app used before
-    // whole-extent caching existed).
-    const prioritized = userLat !== null
-      ? [...assetList].sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
-      : assetList;
-    const fresh = prioritized.slice(0, TILE_WARM_MAX_ASSETS).filter(a => {
-      const key = a.objectId ?? a.id;
-      return key !== undefined && key !== null && !warmedAssetKeys.has(key);
-    });
-    fresh.forEach(a => {
-      warmedAssetKeys.add(a.objectId ?? a.id);
-      TILE_WARM_ZOOM_RANGE.forEach(z => addTiles(tilesForPointRadius(a.lat, a.lng, POINT_CACHE_RADIUS_MILES, z)));
-    });
-  }
-
-  const tiles = Array.from(tileSet.values());
-  if (!tiles.length) return;
-  const ready = await waitForServiceWorkerReady(8000);
-  if (!ready) {
-    console.warn('Service worker not active after 8s — skipping offline map prefetch for these assessments.');
-    return;
-  }
-  setTileCacheStatus(`Caching offline map for ${assetList.length} assessment${assetList.length === 1 ? '' : 's'}…`);
-  // Hybrid is 3 stacked Esri layers (imagery + boundary labels + road
-  // labels) — all 3 have to be cached per tile for the area to render
-  // correctly offline, so expand each map tile into 3 fetch targets.
-  const layerUrls = BASEMAPS.hybrid.layers.map(l => l.url);
-  const urls = [];
-  tiles.forEach(t => layerUrls.forEach(tpl => urls.push(fillArcgisTileUrl(tpl, t))));
-  let i = 0;
-  async function worker() {
-    while (i < urls.length) {
-      const url = urls[i++];
-      try { await fetch(url, { mode: 'no-cors' }); } catch (e) { /* offline mid-warm, or a blocked tile — skip it */ }
-    }
-  }
-  await Promise.all(Array.from({ length: TILE_WARM_CONCURRENCY }, worker));
-  tiles.forEach(t => warmedTileKeys.add(`${t.z}/${t.x}/${t.y}`));
-  setTileCacheStatus('Offline map ready', 5000);
-}
-
-// Registered immediately (not gated on window 'load') — the map starts
-// fetching tiles as soon as initMap() runs, right after DOMContentLoaded,
-// which can happen well before 'load' fires (that waits for every image
-// etc. to finish). Registering as early as possible gives the service
-// worker the best chance to activate and start controlling the page
-// before those very first tiles are requested, so they have a chance to
-// land in the offline cache too, not just tiles from later panning.
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(err => {
-    console.warn('Service worker registration failed — offline tile caching disabled:', err);
-  });
-}
+// Default zoom used when selecting/flying to an asset if the map isn't
+// already zoomed in further than this.
+const DEFAULT_SELECT_ZOOM = 16;
 
 function initMap() {
   map = L.map('map', { zoomControl: false, attributionControl: false }).setView([35.85, -86.4], 7);
@@ -3162,29 +2886,21 @@ function selectAsset(id) {
     if (clusterGroup && clusterGroup.hasLayer(mk)) {
       // zoomToShowLayer picks whatever zoom is actually needed to separate
       // this marker out of its cluster, which can be deeper than
-      // TILE_WARM_ZOOM if points are packed tightly together — there's no
-      // way to force a shallower zoom here without leaving the marker
-      // clustered, so this one case can still land somewhere the offline
-      // cache doesn't cover.
+      // DEFAULT_SELECT_ZOOM if points are packed tightly together — no way
+      // to force a shallower zoom here without leaving the marker clustered.
       clusterGroup.zoomToShowLayer(mk, () => mk.openPopup());
     } else {
       mk.openPopup();
-      // Zoom to TILE_WARM_ZOOM (the default), or STAY at the current zoom
-      // if the user had already zoomed in past it — only zoom IN to reach
-      // the default, never back OUT of a closer view they set on purpose
+      // Zoom to DEFAULT_SELECT_ZOOM, or STAY at the current zoom if the
+      // user had already zoomed in past it — only zoom IN to reach the
+      // default, never back OUT of a closer view they set on purpose
       // (2026-08-12, per feedback: "if someone zooms in closer, adopt that
       // zoom, but if zoomed out beyond the default zoom back to that
-      // default"). This briefly used a flat TILE_WARM_ZOOM for every
-      // selection instead (see git history / app-notes), specifically so
-      // it always lined up with what the offline cache had warmed — now
-      // that the cache covers the mission's whole extent at this zoom (see
-      // "OFFLINE MAP TILE CACHING" below), not just a small circle per
-      // site, adopting a deeper zoom the user chose no longer risks
-      // landing somewhere unwarmed nearly as often as it used to.
-      map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), TILE_WARM_ZOOM), { duration: 0.9 });
+      // default").
+      map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), DEFAULT_SELECT_ZOOM), { duration: 0.9 });
     }
   } else {
-    map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), TILE_WARM_ZOOM), { duration: 0.9 });
+    map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), DEFAULT_SELECT_ZOOM), { duration: 0.9 });
   }
   document.querySelectorAll('.asset-card').forEach(c => c.classList.remove('selected'));
   const card = document.getElementById('card-' + a.id);
@@ -3526,6 +3242,7 @@ function _lightboxKey(e) { if (e.key === 'Escape') closeLightbox(); }
 // ════════════════════════════════════════════════════════════════
 async function startApp() {
   buildFilterGrid();
+  buildLayersMenu();
   bindListHandlers();
   initMap();
   // Show the mission picker immediately (with a loading placeholder) so
