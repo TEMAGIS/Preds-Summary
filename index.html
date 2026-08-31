@@ -631,16 +631,17 @@
 //  token to get a new one. The refresh token itself lasts up to
 //  14 days; once that expires the user has to sign in again.
 //
-//  clientId below is the "Preds Mobile" Native Application item's Client
-//  ID from ArcGIS Online. redirectUri still needs to be set to wherever
-//  this file is actually hosted (GitHub Pages URL), and that same URL
-//  must be added to the app item's Redirect URIs list in AGOL.
+//  clientId below is this app's own AGOL Native Application item
+//  (registered separately from PREDS Mobile's, since this is a distinct
+//  hosted app), with redirectUri set to its GitHub Pages URL
+//  (https://temagis.github.io/Preds-Summary/) — that exact URL is
+//  already added to this app item's Redirect URIs list in AGOL.
 // ════════════════════════════════════════════════════════════════
 const CONFIG = {
   serviceUrl:   'https://services1.arcgis.com/kILp9lqGUeOhnDbI/ArcGIS/rest/services/Preliminary_Damage_Survey_Dashboard_View/FeatureServer/0',
   // OAuth 2.0
-  clientId:     'TrgLp9Lgd2D4hi7T',
-  redirectUri:  'https://temagis.github.io/Mobile_Preds/',
+  clientId:     'qjQzwJEg46RTkosA',
+  redirectUri:  'https://temagis.github.io/Preds-Summary/',
   authorizeUrl: 'https://www.arcgis.com/sharing/rest/oauth2/authorize',
   tokenUrl:     'https://www.arcgis.com/sharing/rest/oauth2/token',
   signOutUrl:   'https://www.arcgis.com/sharing/rest/oauth2/signout',
