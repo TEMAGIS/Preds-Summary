@@ -382,6 +382,26 @@
     font-family: 'DM Sans', sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
   #boundary-hint.error { background: #fdeed3; color: #6b4200; border-color: #d4920a; }
+  /* On-map district/tract number labels (permanent Leaflet tooltips bound
+     in renderBoundaryFeatureCollection()). Overrides Leaflet's default
+     tooltip chrome (white box, arrow, padding) with a smaller, tighter
+     pill — a plain colored-text label with no background would be hard to
+     read over the Hybrid/aerial basemap (the app's default), so this
+     keeps a light background for contrast in both basemaps while staying
+     visually secondary to the assessment markers/popups. Text color is
+     set inline per-label (see bindTooltip call) to match that boundary
+     layer's own outline color, so House/Senate/Congress/Tract labels stay
+     visually tied to their polygon's outline.
+     interactive:false on bindTooltip already keeps it from intercepting
+     clicks, but pointer-events:none here is a low-cost belt-and-suspenders
+     in case a future style tweak drops that option. */
+  .leaflet-tooltip.bnd-label {
+    background: rgba(255,255,255,0.92); border: 1px solid rgba(0,0,0,0.15);
+    border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    padding: 1px 5px; font-family: 'DM Sans', sans-serif; font-weight: 700;
+    font-size: 11px; pointer-events: none; white-space: nowrap;
+  }
+  .leaflet-tooltip.bnd-label::before { display: none; }
   /* ── Detail Sheet ────────────────────────────────────────── */
   #detail-sheet { position: fixed; inset: 0; z-index: 2000; pointer-events: none; }
   #detail-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.55); opacity: 0; transition: opacity 0.3s; }
@@ -2039,11 +2059,45 @@ async function fetchBoundaryViewportGeoJson(cfg) {
   if (cfg.tokenRequired) params.set('token', TOKEN.accessToken);
   return arcgisFetch(`${cfg.url}/query?${params}`);
 }
+// Base vs. "selected" (popup-open) style for a boundary polygon — selected
+// wins over hover (see onEachFeature below), and persists until its popup
+// actually closes, not just on mouseout, so the highlighted feature stays
+// visually marked while its popup/breakdown is up.
+function boundaryStyleFor(cfg, selected) {
+  return selected
+    ? { color: cfg.color, weight: 4, opacity: 1,    fillColor: cfg.color, fillOpacity: 0.22 }
+    : { color: cfg.color, weight: 2, opacity: 0.85, fillColor: cfg.color, fillOpacity: 0.05 };
+}
+// District number (House/Senate/Congress) or a formatted tract number
+// (Census Tracts) for that feature's on-map label — null if the layer has
+// nothing sensible to show, in which case no label is bound at all.
+function boundaryLabelText(feature, cfg) {
+  const props = feature.properties || {};
+  if (cfg.unitLabel === 'tract') return formatTractNumber(props.TRACT_FIPS);
+  const raw = props[cfg.idField];
+  if (raw === undefined || raw === null || raw === '') return null;
+  // District numbers come back zero-padded on some layers ("01") and not
+  // on others ("1", see BOUNDARY_LAYERS config comment re: Congress) —
+  // parsing to int and re-stringifying gives a consistent, unpadded label
+  // either way.
+  const n = parseInt(String(raw), 10);
+  return String(Number.isFinite(n) ? n : raw);
+}
+// Census tract FIPS codes are a 6-digit whole-number+hundredths pair (e.g.
+// "010100" is tract 101.00, "000100" is tract 1.00) — this is the standard
+// Census Bureau display convention, not just the raw code, so it reads the
+// way tract numbers are normally shown on official maps.
+function formatTractNumber(tractFips) {
+  if (!tractFips) return null;
+  const s = String(tractFips).padStart(6, '0');
+  const whole = parseInt(s.slice(0, 4), 10);
+  if (!Number.isFinite(whole)) return null;
+  return `${whole}.${s.slice(4, 6)}`;
+}
 function renderBoundaryFeatureCollection(fc, cfg) {
   if (boundaryLayerGroup) { map.removeLayer(boundaryLayerGroup); boundaryLayerGroup = null; }
-  const baseStyle = { color: cfg.color, weight: 2, opacity: 0.85, fillColor: cfg.color, fillOpacity: 0.05 };
   boundaryLayerGroup = L.geoJSON(fc, {
-    style: () => ({ ...baseStyle }),
+    style: () => boundaryStyleFor(cfg, false),
     onEachFeature: (feature, layer) => {
       // Popup content is a function so it's recomputed fresh every time
       // it's opened — the damage counts depend on scopedAssets(), which
@@ -2055,8 +2109,34 @@ function renderBoundaryFeatureCollection(fc, cfg) {
         autoPanPaddingTopLeft:     [130, 60],
         autoPanPaddingBottomRight: [70, 70],
       });
-      layer.on('mouseover', () => layer.setStyle({ weight: 3, fillOpacity: 0.14 }));
-      layer.on('mouseout',  () => layer.setStyle(baseStyle));
+      // On-map label (district number / tract number) — a permanent,
+      // non-interactive tooltip centered on the feature so it can't
+      // intercept clicks meant for the polygon underneath.
+      const labelText = boundaryLabelText(feature, cfg);
+      if (labelText) {
+        layer.bindTooltip(`<span style="color:${cfg.color}">${escapeHtml(labelText)}</span>`, {
+          permanent:   true,
+          direction:   'center',
+          className:   'bnd-label',
+          interactive: false,
+        });
+      }
+      // Hover only changes the look while the feature isn't the selected
+      // (popup-open) one — otherwise moving the mouse off a selected
+      // feature would wipe its highlight even though its popup is still
+      // open. layer._selected is plain custom state on the Leaflet layer,
+      // toggled by the popupopen/popupclose handlers below.
+      layer.on('mouseover', () => { if (!layer._selected) layer.setStyle({ weight: 3, fillOpacity: 0.14 }); });
+      layer.on('mouseout',  () => { if (!layer._selected) layer.setStyle(boundaryStyleFor(cfg, false)); });
+      layer.on('popupopen', () => {
+        layer._selected = true;
+        layer.setStyle(boundaryStyleFor(cfg, true));
+        layer.bringToFront();
+      });
+      layer.on('popupclose', () => {
+        layer._selected = false;
+        layer.setStyle(boundaryStyleFor(cfg, false));
+      });
     },
   }).addTo(map);
 }
