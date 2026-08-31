@@ -2309,15 +2309,20 @@ const BASEMAPS = {
     label: 'Streets',
     layers: [
       {
-        // Reverted to CARTO Positron ("light_all") on 2026-08-12 — briefly
-        // tried Voyager (rastertiles/voyager) for more visible places/POIs,
-        // but Positron renders building footprints (subtle gray outlines at
-        // higher zoom) that Voyager doesn't show as clearly, and those
-        // footprints turned out to be more useful for this app than
-        // Voyager's extra labels/color. Same free CARTO CDN either way, no
-        // API key.
-        url:         'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-        attribution: '© OpenStreetMap © CARTO',
+        // Switched from CARTO Positron to Esri World Street Map
+        // (2026-08-31) — CARTO's free cartocdn.com basemap tiles started
+        // returning "API key required" in the field, so the Streets
+        // basemap was silently broken. Esri's World_Street_Map is the same
+        // free, no-key, server.arcgisonline.com host the Hybrid basemap
+        // already uses (see below) — one of the two no-key alternatives
+        // this app's notes had already flagged as ready to go if CARTO
+        // ever became unworkable (the other being Esri World Topographic
+        // Map, which adds terrain shading/contours — worth trying instead
+        // if this flatter street style doesn't have enough detail).
+        // Not part of the offline tile cache (see "Map tile caching" —
+        // only Hybrid is proactively cached), same as Positron before it.
+        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+        attribution: 'Esri, HERE, Garmin, FAO, NOAA, USGS, © OpenStreetMap contributors',
         maxZoom:     19,
       },
     ],
