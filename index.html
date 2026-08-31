@@ -260,26 +260,22 @@
      changes to one can't accidentally shift the other. */
   #layers-toggle {
     position: absolute; top: 12px; left: 140px; z-index: 690;
-    width: 36px; height: 36px;
     background: var(--tema-blue); color: white; border: 1px solid var(--tema-blue);
-    border-radius: 8px; display: flex; align-items: center; justify-content: center; gap: 6px;
-    cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    border-radius: 8px; padding: 7px 11px;
+    display: flex; align-items: center; gap: 6px;
     font-size: 12px; font-weight: 700; font-family: 'DM Sans', sans-serif; white-space: nowrap;
-    transition: background 0.15s, color 0.15s, width 0.15s, padding 0.15s;
+    cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    min-height: 36px; transition: background 0.15s, color 0.15s;
   }
   #layers-toggle:hover { background: #003a8c; }
   #layers-toggle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   /* Lit up like an active filter pill whenever a boundary layer is showing,
-     so the button itself hints at "something is on" even with the menu
-     closed — and grows from icon-only to icon+name, same idea as
-     #basemap-toggle's own label, so the active layer is readable at a
-     glance without opening the popover. */
-  #layers-toggle.has-layer {
-    width: auto; padding: 7px 11px;
-    background: #fff; color: var(--tema-blue); border-color: #fff;
-  }
-  .layers-label { display: none; }
-  #layers-toggle.has-layer .layers-label { display: inline; }
+     so the button hints at "something is on" even with the menu closed.
+     The label itself is always shown (reads "Layers" at idle, the active
+     layer's name once one is picked) rather than icon-only by default, so
+     the button's purpose is clear before a first tap, same as
+     #basemap-toggle always showing its current basemap name. */
+  #layers-toggle.has-layer { background: #fff; color: var(--tema-blue); border-color: #fff; }
   #layers-menu {
     position: absolute; top: 54px; left: 12px; z-index: 695;
     background: var(--surface); border-radius: var(--radius-sm);
@@ -630,7 +626,7 @@
     </button>
     <button id="layers-toggle" type="button" onclick="toggleLayersMenu()" aria-expanded="false" aria-controls="layers-menu" aria-label="Choose a map boundary layer">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 21 7 12 12 3 7 12 2"/><polyline points="3 12 12 17 21 12"/><polyline points="3 17 12 22 21 17"/></svg>
-      <span class="layers-label"></span>
+      <span class="layers-label">Layers</span>
     </button>
     <div id="layers-menu" role="group" aria-label="Map boundary layers" hidden></div>
     <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
@@ -2080,7 +2076,7 @@ function updateLayersToggleLabel(key) {
   const cfg = key && BOUNDARY_LAYERS[key];
   btn.classList.toggle('has-layer', !!cfg);
   const label = btn.querySelector('.layers-label');
-  if (label) label.textContent = cfg ? cfg.shortLabel : '';
+  if (label) label.textContent = cfg ? cfg.shortLabel : 'Layers';
   btn.setAttribute('aria-label', cfg ? `Map boundary layer: ${cfg.shortLabel}. Choose a different one.` : 'Choose a map boundary layer');
 }
 // Fetches (if needed) and renders the given boundary layer. Two modes:
