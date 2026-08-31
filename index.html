@@ -1094,11 +1094,29 @@ async function refreshAccessToken() {
 }
 // Ensure the in-memory access token is fresh; refresh it if it's near
 // expiry. Throws if refresh fails — callers should fall back to login.
+// Tracks a single in-flight refresh so concurrent callers share it instead
+// of each firing their own refreshAccessToken() request. This matters more
+// than it used to (2026-08-31) — the detail sheet's Legislative/Census
+// Summary sections query House/Senate/Congress in parallel
+// (fetchBoundaryPointInfo() via Promise.allSettled), and each of those 3
+// calls ensureFreshToken() independently. Without this guard, opening a
+// detail sheet right as the token nears expiry could fire 3 separate
+// refresh requests racing each other — wasted round-trips at best, and if
+// the org's refresh tokens are single-use/rotating, a real risk that 2 of
+// the 3 get rejected and have to fall through to arcgisFetch()'s own
+// retry-after-refresh handling, adding yet more round-trips. One shared
+// promise means only the first caller actually refreshes; everyone else
+// just awaits that same result.
+let _refreshInFlight = null;
 async function ensureFreshToken() {
   if (!TOKEN) throw new Error('Not signed in');
   if (TOKEN.expiresAt && Date.now() < TOKEN.expiresAt - CONFIG.refreshBufferMs) return;
-  const fresh = await refreshAccessToken();
-  saveToken(fresh);
+  if (!_refreshInFlight) {
+    _refreshInFlight = refreshAccessToken()
+      .then(fresh => { saveToken(fresh); })
+      .finally(() => { _refreshInFlight = null; });
+  }
+  return _refreshInFlight;
 }
 // ════════════════════════════════════════════════════════════════
 //  LOGIN UI
@@ -2516,17 +2534,35 @@ const BASEMAPS = {
         // layer. Two stacked layers, same pattern as Hybrid below: a flat
         // gray base plus a separate reference layer for labels/roads/
         // boundaries drawn on top of it.
-        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-        attribution: 'Esri, HERE, Garmin, © OpenStreetMap contributors',
-        maxZoom:     19,
+        // maxNativeZoom caps actual tile *requests* at 16 even though
+        // maxZoom (below) lets the user keep zooming the map UI past
+        // that — added 2026-08-31 after this layer showed literal
+        // "Map data not yet available" gray placeholder tiles once
+        // zoomed in past its real cached detail. Light Gray Canvas's
+        // LOD scheme is defined all the way to level 23 (confirmed via
+        // this service's own tileInfo), but unlike World_Imagery/
+        // World_Street_Map it isn't actually rendered/cached that deep
+        // everywhere — it's inconsistent by area, deeper in dense urban
+        // cores, shallower elsewhere. 16 matches TILE_WARM_ZOOM (this
+        // app's own "normal detail" zoom for a selected assessment), so
+        // real tiles are guaranteed at the zoom the app already zooms to
+        // by default; past that, Leaflet just scales up the z16 tile
+        // instead of requesting one that doesn't exist — a slightly
+        // blurry basemap beats a gray "not available" box.
+        url:            'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+        attribution:    'Esri, HERE, Garmin, © OpenStreetMap contributors',
+        maxZoom:        19,
+        maxNativeZoom:  16,
       },
       {
         // Labels/roads/boundaries reference layer — the Light Gray base
         // above is unlabeled on its own, same two-layer split Esri uses
-        // for this basemap everywhere else it's offered.
-        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
-        attribution: '',
-        maxZoom:     19,
+        // for this basemap everywhere else it's offered. Same
+        // maxNativeZoom cap and for the same reason as the base layer.
+        url:            'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+        attribution:    '',
+        maxZoom:        19,
+        maxNativeZoom:  16,
       },
     ],
   },
@@ -2569,8 +2605,13 @@ function applyBasemap(key) {
   // so cluster + marker overlays remain on top automatically).
   bm.layers.forEach((spec, i) => {
     const layer = L.tileLayer(spec.url, {
-      maxZoom:     spec.maxZoom,
-      attribution: spec.attribution || '',
+      maxZoom:       spec.maxZoom,
+      // Passed through only when a layer spec sets it (Light Gray Canvas
+      // does, see its config comment above) — undefined means Leaflet
+      // just falls back to its own default (== maxZoom), so this is a
+      // no-op for every other basemap layer.
+      maxNativeZoom: spec.maxNativeZoom,
+      attribution:   spec.attribution || '',
     }).addTo(map);
     basemapLayers.push(layer);
     // Wire offline detection to the base imagery layer only (index 0). The
