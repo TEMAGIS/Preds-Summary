@@ -2459,7 +2459,13 @@ function boundaryHeaderHtml(feature, cfg) {
   const props = feature.properties || {};
   if (cfg.unitLabel === 'tract') {
     const tract = props.TRACT_FIPS, fips = props.FIPS;
-    const title = tract ? `Census Tract ${escapeHtml(tract)}` : 'Census Tract';
+    // Same standard Census Bureau "####.##" formatting used for the
+    // on-map label and the detail sheet's Census Summary row (see
+    // formatTractNumber()) — this popup title used to show the raw FIPS
+    // digits instead ("Census Tract 020542"), inconsistent with those
+    // other two spots and not how tract numbers are normally displayed.
+    const formatted = formatTractNumber(tract);
+    const title = formatted ? `Census Tract ${formatted}` : 'Census Tract';
     const sub = fips ? `GEOID ${escapeHtml(fips)}` : '';
     return { title, sub };
   }
