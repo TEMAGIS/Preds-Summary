@@ -361,6 +361,10 @@
      few boundary-specific pieces added for the damage-level breakdown
      and the secondary dwelling-type breakdown. */
   .bnd-pop { min-width: 200px; max-width: 260px; }
+  /* Mission label sits between the census population line and the
+     total-assessments line (2026-08-31, per user request) — was
+     previously just an " — Mission #N" suffix tacked onto .bnd-total. */
+  .bnd-mission-label { font-size: 11px; font-weight: 700; color: var(--text2); margin: 6px 0 1px; }
   .bnd-total { font-size: 12px; color: var(--text2); margin: 2px 0 8px; }
   .bnd-sub-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text3); margin: 10px 0 4px; }
   .bnd-level-list, .bnd-dwelling-list { display: flex; flex-direction: column; gap: 3px; }
@@ -2096,10 +2100,13 @@ function boundaryLabelText(feature, cfg) {
   if (raw === undefined || raw === null || raw === '') return null;
   // District numbers come back zero-padded on some layers ("01") and not
   // on others ("1", see BOUNDARY_LAYERS config comment re: Congress) —
-  // parsing to int and re-stringifying gives a consistent, unpadded label
-  // either way.
+  // parsing to int and re-stringifying gives a consistent, unpadded number
+  // either way. "District " prefix added on the map label (2026-08-31, per
+  // user request) — the boundary popup's own header already reads "TN
+  // House District 1" etc. via boundaryHeaderHtml(), this just brings the
+  // on-map label to the same "District N" wording instead of a bare number.
   const n = parseInt(String(raw), 10);
-  return String(Number.isFinite(n) ? n : raw);
+  return `District ${Number.isFinite(n) ? n : raw}`;
 }
 // Census tract FIPS codes are a 6-digit whole-number+hundredths pair (e.g.
 // "010100" is tract 101.00, "000100" is tract 1.00) — this is the standard
@@ -2381,7 +2388,8 @@ function buildBoundaryPopupHtml(feature, cfg) {
       <div class="pop-type" style="color:${cfg.color}">${title}</div>
       ${sub ? `<div class="pop-name">${escapeHtml(sub)}</div>` : ''}
       ${popLine}
-      <div class="bnd-total">${counts.total} assessment${counts.total !== 1 ? 's' : ''} in this ${cfg.unitLabel} — ${escapeHtml(activeMissionLabel())}</div>
+      <div class="bnd-mission-label">${escapeHtml(activeMissionLabel())} Summary:</div>
+      <div class="bnd-total">${counts.total} assessment${counts.total !== 1 ? 's' : ''} in this ${cfg.unitLabel}</div>
       ${counts.total > 0 ? `
         <div class="bnd-level-list">${levelRows}</div>
         <div class="bnd-sub-label">By dwelling type</div>
