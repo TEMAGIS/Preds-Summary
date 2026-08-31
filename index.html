@@ -1,0 +1,3269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#002868">
+<meta name="referrer" content="no-referrer-when-downgrade">
+<!-- Allow Experience Builder (and other parents) to embed this app in
+     an iframe. Browsers ignore CSP in <meta>, but it documents intent
+     and matches the pattern used in the shelter app. -->
+<meta http-equiv="Content-Security-Policy" content="frame-ancestors *">
+<script>
+  // Apply embed layout immediately to avoid a flash of the wrong sizing.
+  // Usage: append ?layout=full to the URL in the Experience Builder
+  // embed widget so the app stretches to fill the iframe.
+  (function() {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('layout') === 'full') document.documentElement.classList.add('layout-full');
+  })();
+</script>
+<title>PREDS</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f0f2f5; --surface: #ffffff; --surface2: #f7f8fa; --border: #e2e5ea;
+    --text: #0f1117; --text2: #444c5c; --text3: #4f5665;
+    --tema-blue: #002868; --tema-red: #BF0A30;
+    --focus: #ffbf47;
+    --shadow: 0 2px 12px rgba(0,0,0,0.08); --shadow-lg: 0 8px 32px rgba(0,0,0,0.14);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  /* overscroll-behavior-y: none stops the browser's native "pull down to
+     reload the page" gesture at the document level (2026-08-12) — added
+     after a report of dragging the assessment list down far enough to
+     trigger a full page reload, which re-runs the entire boot sequence
+     (re-auth, re-fetch) instead of just the in-app refresh the list itself
+     already supports. #list-section's own overscroll-behavior: contain
+     (below) stops the drag from visually scrolling the page behind it, but
+     some mobile browsers' pull-to-refresh is a document-level gesture that
+     isn't fully suppressed by containment on an inner scroller alone — this
+     belt-and-suspenders rule closes that gap. */
+  html, body { height: 100%; margin: 0; padding: 0; overscroll-behavior-y: none; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+  #app { display: flex; flex-direction: column; height: 100%; min-height: 100vh; max-width: 480px; margin: 0 auto; background: var(--bg); }
+  /* App is hidden until the user is signed in */
+  #app[hidden] { display: none !important; }
+  /* ?layout=full — embed mode: stretch to fill the iframe container */
+  .layout-full #app { max-width: 100%; margin: 0; }
+  /* ── Login screen ────────────────────────────────────────── */
+  #login-screen {
+    position: fixed; inset: 0; z-index: 5000;
+    background: linear-gradient(165deg, var(--tema-blue) 0%, #00193f 100%);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; padding-top: max(24px, env(safe-area-inset-top));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+  #login-screen[hidden] { display: none; }
+  .login-card {
+    width: 100%; max-width: 420px;
+    background: var(--surface); border-radius: 18px;
+    padding: 28px 24px 22px; box-shadow: var(--shadow-lg);
+  }
+  .login-brand { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .login-brand .tn-badge { width: 56px; height: 56px; }
+  .login-title { font-size: 18px; font-weight: 700; color: var(--text); text-align: center; letter-spacing: -0.3px; }
+  .login-sub   { font-size: 13px; color: var(--text2); text-align: center; line-height: 1.4; max-width: 340px; }
+  .login-form  { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+  .login-form label { font-size: 12px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+  .login-form input {
+    width: 100%; padding: 12px 14px; border: 2px solid var(--border); border-radius: var(--radius-sm);
+    font-family: 'DM Sans', sans-serif; font-size: 16px; background: var(--surface2); color: var(--text);
+    outline: none; transition: border-color 0.15s, background 0.15s;
+  }
+  .login-form input:focus { border-color: var(--tema-blue); background: var(--surface); box-shadow: 0 0 0 3px rgba(0,40,104,0.12); }
+  .login-row { display: flex; flex-direction: column; gap: 6px; }
+  .login-checkbox { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text2); }
+  .login-checkbox input { width: auto; }
+  .login-btn {
+    width: 100%; padding: 14px; border: none; border-radius: var(--radius-sm);
+    background: var(--tema-blue); color: white; font-size: 15px; font-weight: 700;
+    font-family: 'DM Sans', sans-serif; cursor: pointer; min-height: 48px;
+    transition: opacity 0.15s, transform 0.05s;
+  }
+  .login-btn:hover { opacity: 0.92; }
+  .login-btn:active { transform: scale(0.99); }
+  .login-btn:disabled { opacity: 0.55; cursor: wait; }
+  .login-btn-oauth { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 6px; }
+  .login-btn-oauth:hover { background: #003a8c; }
+  .login-error {
+    background: #fde8ea; border: 1px solid #f5c2c7; color: #842029;
+    padding: 10px 12px; border-radius: var(--radius-sm); font-size: 13px;
+    line-height: 1.4; display: none;
+  }
+  .login-error.visible { display: block; }
+  .login-meta { font-size: 11px; color: var(--text3); text-align: center; margin-top: 14px; line-height: 1.5; }
+  .login-meta a { color: var(--tema-blue); text-decoration: none; }
+  .login-meta a:hover { text-decoration: underline; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+  .skip-link { position: absolute; top: -100px; left: 0; z-index: 9999; background: var(--focus); color: #000; font-weight: 700; font-size: 14px; padding: 10px 16px; border-radius: 0 0 8px 0; text-decoration: none; transition: top 0.2s; }
+  .skip-link:focus { top: 0; }
+  /* ── Header ──────────────────────────────────────────────── */
+  #header { background: var(--tema-blue); padding: 12px 16px 10px; flex-shrink: 0; z-index: 100; padding-top: max(12px, env(safe-area-inset-top)); }
+  .header-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 8px; }
+  .app-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .tn-badge { width: 38px; height: 38px; display: block; flex-shrink: 0; }
+  .app-title-text { color: white; font-size: 16px; font-weight: 700; letter-spacing: -0.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .header-pills { display: flex; gap: 6px; flex-shrink: 0; }
+  .header-pill {
+    display: flex; align-items: center; gap: 5px; font-size: 12px; font-family: 'DM Mono', monospace;
+    color: white; background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.5);
+    border-radius: 20px; padding: 6px 11px; cursor: pointer; transition: background 0.15s; white-space: nowrap;
+    font-weight: 600; min-height: 36px;
+  }
+  .header-pill:hover { background: rgba(255,255,255,0.28); }
+  .header-pill.icon-only { padding: 6px; aspect-ratio: 1; justify-content: center; }
+  .search-wrap { position: relative; margin-bottom: 8px; }
+  .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text3); pointer-events: none; }
+  /* ── Mission picker (full-screen, shown before the map/list) ───── */
+  #mission-screen {
+    position: fixed; inset: 0; z-index: 4500;
+    background: linear-gradient(165deg, var(--tema-blue) 0%, #00193f 100%);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; padding-top: max(24px, env(safe-area-inset-top));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+  #mission-screen[hidden] { display: none; }
+  .mission-screen-card {
+    width: 100%; max-width: 440px; max-height: 88vh;
+    background: var(--surface); border-radius: 18px;
+    padding: 22px 20px 20px; box-shadow: var(--shadow-lg);
+    display: flex; flex-direction: column;
+  }
+  .mission-screen-header { margin-bottom: 14px; flex-shrink: 0; }
+  .mission-screen-header h2 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; margin-bottom: 4px; }
+  .mission-screen-sub { font-size: 13px; color: var(--text2); line-height: 1.4; }
+  .mission-screen-list { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+  .mission-screen-loading { text-align: center; padding: 28px 12px; color: var(--text3); font-size: 13px; }
+  .mission-option {
+    width: 100%; text-align: left; background: var(--surface2); border: 2px solid var(--border);
+    border-radius: var(--radius-sm); padding: 12px 14px; cursor: pointer; font-family: 'DM Sans', sans-serif;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .mission-option:hover { border-color: var(--tema-blue); background: var(--surface); }
+  .mission-option.selected { border-color: var(--tema-blue); background: #e8eef9; }
+  .mission-option-badge {
+    display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    color: var(--tema-blue); background: #dce6fb; padding: 2px 7px; border-radius: 8px; margin-bottom: 5px;
+  }
+  .mission-option-name { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+  .mission-option-line { font-size: 12px; color: var(--text2); line-height: 1.5; }
+  #search-input {
+    width: 100%; padding: 10px 10px 10px 34px; border: 2px solid var(--border); border-radius: var(--radius-sm);
+    font-family: 'DM Sans', sans-serif; font-size: 16px;
+    background: var(--surface); color: var(--text); outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  #search-input:focus { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(255,191,71,0.35); }
+  .filter-btn {
+    display: flex; align-items: center; gap: 5px;
+    background: var(--surface); border: 1.5px solid var(--border);
+    color: var(--text2); border-radius: 20px; padding: 5px 11px;
+    font-size: 12px; font-weight: 700; font-family: 'DM Sans', sans-serif;
+    cursor: pointer; transition: all 0.15s; white-space: nowrap; min-height: 32px;
+  }
+  .filter-btn:hover { border-color: var(--tema-blue); color: var(--tema-blue); }
+  .filter-btn.has-filter { background: var(--tema-blue); border-color: var(--tema-blue); color: white; }
+  .active-filters { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; padding: 0 16px 8px; }
+  .active-filters:empty { display: none; }
+  .active-chip {
+    display: flex; align-items: center; gap: 3px;
+    background: var(--tema-blue); color: white;
+    border-radius: 12px; padding: 3px 8px; border: none;
+    font-size: 11px; font-weight: 700; white-space: nowrap; cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .active-chip-x { font-size: 13px; line-height: 1; opacity: 0.8; margin-left: 1px; }
+  #filter-drawer {
+    overflow: hidden; max-height: 0;
+    transition: max-height 0.3s cubic-bezier(0.4,0,0.2,1);
+    background: var(--tema-blue);
+    padding: 0 16px;
+  }
+  #filter-drawer.open { max-height: 420px; padding: 12px 16px 14px; }
+  .fg-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+  @media (min-width: 480px) { .fg-row { grid-template-columns: repeat(6, 1fr); } }
+  .fgt {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    cursor: pointer; user-select: none; opacity: 0.65; transition: opacity 0.15s, transform 0.15s;
+    background: rgba(255,255,255,0.06); border: 1.5px solid rgba(255,255,255,0.15);
+    padding: 7px 4px; border-radius: 10px; color: white;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .fgt:hover { opacity: 0.95; background: rgba(255,255,255,0.12); }
+  .fgt.active { opacity: 1; background: white; border-color: white; color: var(--tema-blue); transform: scale(1.02); }
+  .fgt-icon { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; }
+  .fgt-icon svg { width: 100%; height: 100%; }
+  .fgt-label { font-size: 10px; font-weight: 700; text-align: center; line-height: 1.15; }
+  .buf-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.85); margin: 2px 0 6px; }
+  .buf-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* .bndt (boundary-layer pills) shares this exact look but is kept as a
+     separate class from .buft (distance pills) — not just a style alias.
+     setBuffer()/clearBufferFilter() below select `.buft` globally to reset
+     the distance row's active state; if boundary pills used that same
+     class, picking a distance filter would incidentally wipe the visual
+     "active" state off whichever boundary pill was highlighted (the
+     boundary layer itself would stay on the map — activeBoundary is a
+     separate variable — but its pill would wrongly look deselected). Kept
+     as two classes with identical CSS instead of scoping those selectors
+     more tightly, so the existing buffer-filter code is untouched. */
+  .buft, .bndt {
+    padding: 6px 12px; border-radius: 16px; border: 1.5px solid rgba(255,255,255,0.35);
+    background: rgba(255,255,255,0.08); color: #fff; font-size: 12px; font-weight: 700;
+    font-family: 'DM Sans', sans-serif; cursor: pointer; transition: all 0.15s;
+  }
+  .buft:hover, .bndt:hover { background: rgba(255,255,255,0.18); }
+  .buft.active, .bndt.active { background: #fff; color: var(--tema-blue); border-color: #fff; }
+  /* ── Map ─────────────────────────────────────────────────── */
+  #map-container { flex-shrink: 0; height: 36vh; position: relative; }
+  #map { width: 100%; height: 100%; }
+  #fab-locate {
+    position: absolute; bottom: 14px; right: 12px; width: 48px; height: 48px;
+    background: var(--tema-blue); color: white; border: none; border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,40,104,0.4);
+    transition: transform 0.15s; z-index: 690;
+  }
+  #basemap-toggle {
+    /* Raised to z-index 690 (2026-08-07) — was 350, which sits ABOVE the
+       tile pane (200) and overlay pane (400) but BELOW Leaflet's own
+       markerPane (600) and tooltipPane (650). That meant a marker or
+       cluster icon that happened to render near the top-left corner of
+       the viewport (entirely possible after fitBounds() picks a view
+       that fits every point in a mission — nothing stops the nearest
+       point from landing right there) could visually sit on top of the
+       button, even though the button's own position/CSS were never
+       wrong. 690 sits above every Leaflet pane except the popup pane
+       (700), so only a popup dragged into that exact corner can still
+       cover it — everything else the map can draw (tiles, markers,
+       clusters, tooltips) now renders behind it. */
+    position: absolute; top: 12px; left: 12px; z-index: 690;
+    background: var(--tema-blue); color: white; border: 1px solid var(--tema-blue);
+    border-radius: 8px; padding: 7px 11px;
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 700; font-family: 'DM Sans', sans-serif;
+    cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    min-height: 36px; transition: background 0.15s, color 0.15s;
+  }
+  #basemap-toggle:hover { background: #003a8c; }
+  #basemap-toggle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  #fab-locate:hover { transform: scale(1.08); }
+  #fab-locate:active { transform: scale(0.95); }
+  #map-offline-badge {
+    position: absolute; bottom: 14px; left: 12px; z-index: 690;
+    max-width: calc(100% - 78px);
+    background: #fdeed3; color: #6b4200; border: 1px solid #d4920a;
+    border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 700;
+    font-family: 'DM Sans', sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }
+  /* Applied to #map-container while setMapOfflineState(true) is active —
+     see the OFFLINE MAP TILE CACHING section. Desaturates/dims only the
+     tile layers (not markers/popups/controls) so a cached, possibly-stale
+     map still reads clearly, rather than looking identical to a live one
+     or, worse, showing blank tiles once panning/zooming runs past what's
+     actually cached. */
+  #map-container.map-degraded .leaflet-tile-pane { filter: grayscale(55%) brightness(0.9) sepia(8%); }
+  /* ── List ────────────────────────────────────────────────── */
+  #list-section { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .list-controls { position: sticky; top: 0; z-index: 10; background: var(--bg); box-shadow: 0 1px 0 rgba(0,0,0,0.04); }
+  .list-header { padding: 10px 16px 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .list-count { font-size: 12px; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: 0.6px; }
+  #last-refreshed { font-size: 11px; color: var(--text3); font-family: 'DM Mono', monospace; margin-top: 2px; }
+  #tile-cache-status { font-size: 11px; color: var(--tema-blue); font-weight: 700; margin-top: 2px; }
+  .stale-badge { display: inline-block; background: #fdeed3; color: #6b4200; border: 1px solid #d4920a; padding: 1px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; margin-left: 4px; vertical-align: 2px; }
+  #asset-list { display: flex; flex-direction: column; padding: 0 0 80px; }
+  /* ── Card ────────────────────────────────────────────────── */
+  .asset-card {
+    background: var(--surface); margin: 0 12px 8px; border-radius: var(--radius);
+    box-shadow: var(--shadow); border: 2px solid transparent; cursor: pointer; transition: all 0.2s; overflow: hidden;
+  }
+  .asset-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+  .asset-card:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-color: transparent; }
+  .asset-card.selected { border-color: var(--tema-blue); box-shadow: 0 0 0 3px rgba(0,40,104,0.1), var(--shadow); }
+  .card-body { display: flex; align-items: stretch; }
+  .card-strip { width: 5px; flex-shrink: 0; }
+  .card-content { flex: 1; padding: 13px 13px 10px; min-width: 0; }
+  .card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+  .type-icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: white; }
+  .type-icon svg { width: 100%; height: 100%; }
+  /* Two columns — damage level, then address — sitting side by side and
+     vertically centered against each other and the icon, rather than
+     stacked as two competing bold lines. */
+  .card-titles { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+  .card-title-divider { width: 1px; align-self: stretch; background: var(--border); flex-shrink: 0; }
+  /* Address + city/state/zip form a normal two-line address block, stacked
+     vertically, sitting to the right of the damage level. */
+  .card-addr-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .card-name { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.2px; min-width: 0; }
+  .card-cityzip { font-size: 12px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; margin-bottom: 0; }
+  /* Fixed width (sized for the longest label, "Inaccessible") so the
+     divider and address block start at the same x-position on every card
+     regardless of which damage level is shown. */
+  .card-type-label { font-size: 14px; font-weight: 700; letter-spacing: -0.2px; flex-shrink: 0; white-space: nowrap; width: 86px; }
+  .card-asset-type { font-size: 11px; color: var(--text3); margin-top: 1px; font-style: italic; }
+  .card-cityzip.card-county { color: var(--text3); }
+  .dist-pill { font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600; color: #003a8c; background: #dce6fb; padding: 3px 8px; border-radius: 6px; flex-shrink: 0; white-space: nowrap; }
+  .meta-badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+  .meta-badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; white-space: nowrap; background: var(--surface2); border: 1px solid var(--border); color: var(--text2); }
+  .meta-badge.region { background: #e8eef9; border-color: #b9c8e6; color: #1e3a6e; }
+  .meta-badge.sector { background: #f0e9f7; border-color: #c9b8df; color: #5a3a85; }
+  .card-footer { border-top: 1px solid var(--border); display: flex; }
+  .card-action {
+    flex: 1; padding: 12px 6px; display: flex; align-items: center; justify-content: center; gap: 4px;
+    font-size: 12px; font-weight: 700; color: var(--text2); cursor: pointer; transition: background 0.15s, color 0.15s;
+    text-decoration: none; border: none; background: none; font-family: 'DM Sans', sans-serif;
+    min-height: 44px;
+  }
+  .card-action:hover { background: var(--surface2); color: var(--tema-blue); }
+  .card-action + .card-action { border-left: 1px solid var(--border); }
+  .card-action.primary { color: var(--tema-blue); }
+  /* ── Empty / status ──────────────────────────────────────── */
+  .empty-state { text-align: center; padding: 48px 24px; color: var(--text3); }
+  .empty-state .icon { font-size: 36px; margin-bottom: 12px; }
+  .empty-state p { font-size: 14px; line-height: 1.5; }
+  .offline-banner { background: #fdeed3; border-bottom: 1px solid #d4920a; color: #6b4200; padding: 8px 14px; font-size: 12px; text-align: center; font-weight: 600; }
+  /* ── User marker ─────────────────────────────────────────── */
+  .user-dot { width: 16px; height: 16px; background: var(--tema-blue); border-radius: 50%; border: 3px solid white; box-shadow: 0 0 0 3px rgba(0,40,104,0.3); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{box-shadow:0 0 0 3px rgba(0,40,104,0.3)} 50%{box-shadow:0 0 0 8px rgba(0,40,104,0.08)} }
+  /* Last-known (not live) location fix — amber to match the offline-banner/
+     stale-badge color language used elsewhere, animation off since a
+     pulsing dot reads as "actively tracking," which this isn't. */
+  .user-dot-stale { background: #d4920a; box-shadow: 0 0 0 3px rgba(212,146,10,0.3); animation: none; }
+  .leaflet-popup-content-wrapper { border-radius: var(--radius-sm) !important; box-shadow: var(--shadow-lg) !important; font-family: 'DM Sans',sans-serif !important; padding: 0 !important; }
+  .leaflet-popup-content { margin: 0 !important; }
+  .pop { padding: 11px 13px; min-width: 160px; }
+  .pop-name { font-size: 13px; font-weight: 700; margin-bottom: 2px; color: var(--text); }
+  .pop-type { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .pop-cityzip { font-size: 11px; color: var(--text2); margin-top: 1px; }
+  .pop-attach-loading { font-size: 11px; color: var(--text3); margin-top: 7px; }
+  .pop-attach { display: flex; gap: 6px; margin-top: 8px; }
+  .pop-attach-thumb {
+    width: 44px; height: 44px; border-radius: 6px; overflow: hidden; flex-shrink: 0;
+    background: var(--surface2); border: 1px solid var(--border); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 17px;
+  }
+  .pop-attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pop-attach-more { color: var(--text2); font-size: 12px; font-weight: 700; background: var(--surface3, #eef1f5); }
+  /* Shown while a popup thumbnail's full image is still downloading, and as
+     the fallback look if it fails — same shimmer/pattern as the detail
+     sheet's .attachment-tile.loading (2026-08-12: popup thumbnails had no
+     loading/error state at all before this, unlike the detail sheet). */
+  .pop-attach-thumb.loading { background: linear-gradient(90deg, var(--surface2) 25%, #ececec 50%, var(--surface2) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+  .pop-attach-thumb.pop-attach-broken { font-size: 15px; color: var(--text3); cursor: default; }
+  /* ── Boundary layer popups (districts / census tracts) ──────
+     Reuses .pop/.pop-type/.pop-name from the assessment marker popup
+     above so both popup "families" read as the same product, with a
+     few boundary-specific pieces added for the damage-level breakdown
+     and the secondary dwelling-type breakdown. */
+  .bnd-pop { min-width: 200px; max-width: 260px; }
+  .bnd-total { font-size: 12px; color: var(--text2); margin: 2px 0 8px; }
+  .bnd-sub-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text3); margin: 10px 0 4px; }
+  .bnd-level-list, .bnd-dwelling-list { display: flex; flex-direction: column; gap: 3px; }
+  .bnd-level-row, .bnd-dwelling-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .bnd-level-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .bnd-level-label, .bnd-dwelling-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .bnd-level-count, .bnd-dwelling-count { font-family: 'DM Mono', monospace; font-weight: 700; color: var(--text); }
+  .bnd-dwelling-label { color: var(--text2); font-weight: 500; }
+  .bnd-empty { font-size: 12px; color: var(--text3); font-style: italic; margin-top: 2px; }
+  /* Top-center hint badge: "zoom in to load census tracts" or a boundary
+     fetch error. Distinct spot from the offline badge (bottom-left), the
+     basemap toggle (top-left) and the locate FAB (bottom-right) so none
+     of the on-map controls fight for the same corner. */
+  #boundary-hint {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 690;
+    max-width: calc(100% - 24px);
+    background: var(--tema-blue); color: white; border: 1px solid rgba(255,255,255,0.4);
+    border-radius: 8px; padding: 6px 12px; font-size: 11px; font-weight: 700; text-align: center;
+    font-family: 'DM Sans', sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  #boundary-hint.error { background: #fdeed3; color: #6b4200; border-color: #d4920a; }
+  /* ── Detail Sheet ────────────────────────────────────────── */
+  #detail-sheet { position: fixed; inset: 0; z-index: 2000; pointer-events: none; }
+  #detail-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.55); opacity: 0; transition: opacity 0.3s; }
+  #detail-content {
+    position: absolute; bottom: 0; left: 0; right: 0; max-width: 480px; margin: 0 auto;
+    background: var(--surface); border-radius: 20px 20px 0 0;
+    padding: 0 0 env(safe-area-inset-bottom,20px);
+    transform: translateY(100%); transition: transform 0.35s cubic-bezier(0.32,0.72,0,1);
+    max-height: 85vh; overflow-y: auto;
+  }
+  #detail-sheet.open { pointer-events: all; }
+  #detail-sheet.open #detail-overlay { opacity: 1; }
+  #detail-sheet.open #detail-content { transform: translateY(0); }
+  .sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 12px auto 0; }
+  .sheet-close-btn {
+    position: absolute; top: 12px; right: 16px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 50%; width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 18px; line-height: 1; color: var(--text2);
+  }
+  .sheet-banner { margin: 14px 20px 0; border-radius: var(--radius-sm); padding: 12px 14px; display: flex; align-items: center; gap: 10px; color: white; }
+  .sheet-banner svg { width: 24px; height: 24px; flex-shrink: 0; }
+  .banner-label { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text); }
+  .banner-desc { font-size: 12px; margin-top: 2px; opacity: 0.95; line-height: 1.4; }
+  .sheet-header { padding: 14px 20px 10px; }
+  .sheet-name { font-size: 19px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 3px; }
+  .sheet-addr { font-size: 13px; color: var(--text2); line-height: 1.4; }
+  .sheet-addr.sheet-county { color: var(--text3); font-size: 12px; margin-top: 1px; }
+  .sheet-dist { font-size: 12px; font-family: 'DM Mono',monospace; font-weight: 700; margin-top: 5px; color: #003a8c; }
+  .sdiv { height: 1px; background: var(--border); margin: 0 20px; }
+  .sec { padding: 14px 20px; }
+  .sec-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text3); margin-bottom: 8px; }
+  /* Fixed (not max-content) so the label/value boundary lines up at the
+     same x position across every section on the sheet, not just within
+     each section individually. */
+  .kv-grid { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; font-size: 13px; }
+  .kv-key { color: var(--text3); font-weight: 600; }
+  .kv-val { color: var(--text); word-break: break-word; }
+  .kv-empty { color: var(--text3); font-style: italic; opacity: 0.75; }
+  a.kv-link { color: var(--tema-blue); text-decoration: none; font-weight: 600; }
+  a.kv-link:hover { text-decoration: underline; }
+  .attachment-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 4px; }
+  .attachment-tile {
+    aspect-ratio: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    overflow: hidden; cursor: pointer; position: relative; display: flex; align-items: center; justify-content: center;
+    color: var(--text3); font-size: 11px;
+  }
+  .attachment-tile img { width: 100%; height: 100%; object-fit: cover; }
+  .attachment-tile .fileinfo { padding: 6px; text-align: center; line-height: 1.3; }
+  .attachment-tile.loading { background: linear-gradient(90deg, var(--surface2) 25%, #ececec 50%, var(--surface2) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .nav-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 20px 20px; }
+  .nav-btn { padding: 14px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 700; font-family: 'DM Sans',sans-serif; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; transition: opacity 0.15s; min-height: 48px; }
+  .nav-btn:hover { opacity: 0.88; }
+  .nav-btn.goo { background: #1558d6; color: white; }
+  .nav-btn.apl { background: #111; color: white; }
+  /* ── Image lightbox ──────────────────────────────────────── */
+  #lightbox {
+    position: fixed; inset: 0; z-index: 5500; background: rgba(0,0,0,0.92);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  #lightbox[hidden] { display: none; }
+  #lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; }
+  #lightbox .close {
+    position: absolute; top: max(16px, env(safe-area-inset-top)); right: 16px;
+    background: rgba(0,0,0,0.6); border: 1.5px solid white; color: white;
+    border-radius: 50%; width: 40px; height: 40px; cursor: pointer; font-size: 22px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  @keyframes loadbar { 0%{transform:translateX(-100%)} 100%{transform:translateX(350%)} }
+  @media(min-width:600px){ #app{ box-shadow: var(--shadow-lg); } }
+  /* ── Desktop layout ──────────────────────────────────────── */
+  @media (min-width: 900px) {
+    #app {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      grid-template-columns: 420px 1fr;
+      max-width: none; width: 100%; height: 100vh; min-height: 100vh; box-shadow: none;
+    }
+    #header        { grid-column: 1 / -1; grid-row: 1; }
+    #list-section  { grid-column: 1; grid-row: 2; border-right: 1px solid var(--border); }
+    #map-container { grid-column: 2; grid-row: 2; height: 100%; }
+    #detail-content { left: 0; right: auto; bottom: 0; width: 420px; max-width: 420px; margin: 0; max-height: calc(100vh - 60px); }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#asset-list">Skip to assessment list</a>
+<!-- ════════════════════════════════════════════════════════════
+     LOGIN SCREEN
+     Shown until a valid AGOL token is obtained. The Sign in
+     button kicks off the OAuth 2.0 authorization-code (PKCE) flow.
+     ════════════════════════════════════════════════════════════ -->
+<div id="login-screen" role="dialog" aria-labelledby="login-title">
+  <div class="login-card">
+    <div class="login-brand">
+      <svg class="tn-badge" viewBox="0 0 100 100" role="img" aria-label="Tennessee state logo">
+        <rect x="0" y="0" width="100" height="84" fill="#D22730"/>
+        <rect x="0" y="84" width="100" height="5" fill="#ffffff"/>
+        <rect x="0" y="89" width="100" height="11" fill="#002868"/>
+        <text x="50" y="70" text-anchor="middle" textLength="86" lengthAdjust="spacingAndGlyphs"
+              font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="74"
+              fill="#ffffff">TN</text>
+      </svg>
+      <div>
+        <div class="login-title" id="login-title">Preliminary Damage Assessments (PREDS)</div>
+        <div class="login-sub">Sign in with your ArcGIS Online account to view preliminary damage assessments near your location.</div>
+      </div>
+    </div>
+    <div id="login-error" class="login-error" role="alert"></div>
+    <button id="oauth-signin-btn" class="login-btn login-btn-oauth" type="button" onclick="startOAuthFlow()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" style="flex-shrink:0">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+        <circle cx="8.5" cy="7" r="4"/>
+        <polyline points="17 11 19 13 23 9"/>
+      </svg>
+      Sign in with ArcGIS Online
+    </button>
+    <a id="oauth-fallback" href="#" target="_blank" hidden
+       style="display:block;text-align:center;font-size:12px;color:var(--text3);margin-top:10px;text-decoration:underline;cursor:pointer">
+      Sign-in didn't open? Open in a new tab
+    </a>
+  </div>
+</div>
+<!-- ════════════════════════════════════════════════════════════
+     MISSION PICKER
+     Shown right after sign-in, before the map/list ever render, so
+     picking a mission doesn't cost any header/map real estate. Also
+     reachable later via the "Mission" pill in the header to switch.
+     ════════════════════════════════════════════════════════════ -->
+<div id="mission-screen" role="dialog" aria-labelledby="mission-screen-title" hidden>
+  <div class="mission-screen-card">
+    <div class="mission-screen-header">
+      <h2 id="mission-screen-title">Select a Mission</h2>
+      <div class="mission-screen-sub">Choose which mission's damage assessments to view.</div>
+    </div>
+    <div id="mission-screen-list" class="mission-screen-list"></div>
+  </div>
+</div>
+<!-- ════════════════════════════════════════════════════════════
+     MAIN APP — hidden until a mission is picked
+     ════════════════════════════════════════════════════════════ -->
+<div id="app" role="application" aria-label="TN Damage Assessments map" hidden>
+  <header id="header" role="banner">
+    <div class="header-top">
+      <div class="app-title">
+        <svg class="tn-badge" viewBox="0 0 100 100" role="img" aria-label="Tennessee state logo">
+          <rect x="0" y="0" width="100" height="84" fill="#D22730"/>
+          <rect x="0" y="84" width="100" height="5" fill="#ffffff"/>
+          <rect x="0" y="89" width="100" height="11" fill="#002868"/>
+          <text x="50" y="70" text-anchor="middle" textLength="86" lengthAdjust="spacingAndGlyphs"
+                font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="74"
+                fill="#ffffff">TN</text>
+        </svg>
+        <h1 class="app-title-text">PREDS</h1>
+      </div>
+      <div class="header-pills">
+        <button class="header-pill" onclick="showMissionScreen()" aria-label="Change mission" id="mission-pill">
+          <span id="mission-pill-label">Mission</span>
+        </button>
+        <button class="header-pill" onclick="requestLocation()" aria-label="Use my location">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          <span id="loc-label">Locate</span>
+        </button>
+      </div>
+    </div>
+    <div class="search-wrap">
+      <label for="search-input" class="sr-only">Search assessments</label>
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="search-input" type="search" placeholder="Search by address, city, county, dwelling type…" oninput="onSearch()" aria-label="Search assessments" autocomplete="off">
+    </div>
+    <div id="loading-bar" role="progressbar" aria-label="Loading" style="display:none;height:3px;background:rgba(255,255,255,0.3);border-radius:2px;overflow:hidden;margin-bottom:2px">
+      <div style="height:100%;width:40%;background:white;border-radius:2px;animation:loadbar 1.2s ease-in-out infinite"></div>
+    </div>
+  </header>
+  <div id="offline-banner" class="offline-banner" hidden>
+    Showing cached data — connection unavailable. <button onclick="fetchAssets()" style="background:none;border:none;color:#6b4200;font-weight:700;text-decoration:underline;cursor:pointer;font-family:inherit;font-size:inherit">Retry</button>
+  </div>
+  <div id="map-container" role="region" aria-label="Map showing damage assessment locations">
+    <div id="map"></div>
+    <button id="basemap-toggle" type="button" onclick="toggleBasemap()" aria-label="Switch to Streets basemap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
+      <span class="basemap-label">Streets</span>
+    </button>
+    <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    </button>
+    <div id="map-offline-badge" role="status" aria-live="polite" hidden>📡 Offline — showing cached map</div>
+    <div id="boundary-hint" role="status" aria-live="polite" hidden></div>
+  </div>
+  <main id="list-section" aria-label="Damage assessments">
+    <div class="list-controls">
+      <div class="list-header">
+        <div>
+          <div class="list-count" id="list-count" aria-live="polite">Loading…</div>
+          <div id="last-refreshed" aria-live="polite"></div>
+          <div id="tile-cache-status" aria-live="polite" hidden></div>
+        </div>
+        <div class="header-actions">
+          <button id="filter-toggle-btn" class="filter-btn" onclick="toggleFilterDrawer()" aria-expanded="false" aria-controls="filter-drawer">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+            Filter
+          </button>
+        </div>
+      </div>
+      <div class="active-filters" id="active-filters" aria-label="Active filters" aria-live="polite"></div>
+      <div id="filter-drawer" aria-hidden="true" inert>
+        <nav id="filter-grid" aria-label="Filter assessments by damage level and distance"></nav>
+      </div>
+    </div>
+    <div id="asset-list" role="list" aria-label="Assessment results"></div>
+  </main>
+</div>
+<!-- ════════════════════════════════════════════════════════════
+     DETAIL SHEET
+     ════════════════════════════════════════════════════════════ -->
+<div id="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detail-asset-name" hidden>
+  <div id="detail-overlay" onclick="closeDetail()"></div>
+  <div id="detail-content">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <button class="sheet-close-btn" onclick="closeDetail()" aria-label="Close details">×</button>
+    <div id="detail-body"></div>
+  </div>
+</div>
+<!-- ════════════════════════════════════════════════════════════
+     LIGHTBOX (for attachment images)
+     ════════════════════════════════════════════════════════════ -->
+<div id="lightbox" hidden onclick="closeLightbox()">
+  <button class="close" onclick="closeLightbox()" aria-label="Close image">×</button>
+  <img id="lightbox-img" alt="">
+</div>
+<script>
+// ════════════════════════════════════════════════════════════════
+//  CONFIG  — OAuth 2.0 authorization-code-with-PKCE flow
+//  ─────────────────────────────────────────────────────
+//  clientId comes from the AGOL app registration. redirectUri must
+//  exactly match one of the redirect URIs configured for that app
+//  (including the trailing slash, if any).
+//
+//  The app uses PKCE so no client_secret is needed — that's the
+//  whole point of registering the AGOL app as a Native Application.
+//
+//  When the access token expires (~2h) we silently use the refresh
+//  token to get a new one. The refresh token itself lasts up to
+//  14 days; once that expires the user has to sign in again.
+//
+//  clientId below is the "Preds Mobile" Native Application item's Client
+//  ID from ArcGIS Online. redirectUri still needs to be set to wherever
+//  this file is actually hosted (GitHub Pages URL), and that same URL
+//  must be added to the app item's Redirect URIs list in AGOL.
+// ════════════════════════════════════════════════════════════════
+const CONFIG = {
+  serviceUrl:   'https://services1.arcgis.com/kILp9lqGUeOhnDbI/ArcGIS/rest/services/Preliminary_Damage_Survey_Dashboard_View/FeatureServer/0',
+  // OAuth 2.0
+  clientId:     'TrgLp9Lgd2D4hi7T',
+  redirectUri:  'https://temagis.github.io/Mobile_Preds/',
+  authorizeUrl: 'https://www.arcgis.com/sharing/rest/oauth2/authorize',
+  tokenUrl:     'https://www.arcgis.com/sharing/rest/oauth2/token',
+  signOutUrl:   'https://www.arcgis.com/sharing/rest/oauth2/signout',
+  // Refresh-token lifetime in MINUTES (max 20160 = 14 days).
+  tokenExpirationMinutes: 20160,
+  // Refresh the access token this many ms before it actually expires.
+  refreshBufferMs: 5 * 60 * 1000,
+  // Auto-refresh of the assessment list (set to 0 to disable).
+  refreshInterval: 5 * 60 * 1000,
+  // Storage keys — versioned/renamed from the old CIKR viewer's keys so a
+  // browser that previously cached Critical2TN data doesn't try to read it
+  // back in as if it were damage-assessment records.
+  tokenKey:    'pda_token_v1',
+  cacheKey:    'pda_cache_v1',
+  locationKey: 'pda_last_location_v1',
+};
+// ════════════════════════════════════════════════════════════════
+//  FIELD MAPPING — exact names used by the Preliminary Damage Survey
+//  Dashboard View, taken from the layer's Arcade popup expression.
+// ════════════════════════════════════════════════════════════════
+const FIELDS = {
+  objectId:           'OBJECTID',
+  address:            'address',
+  suiteApt:           'suite_apt',
+  city:               'city',
+  state:              'state',
+  zip:                'zipcode',
+  county:              'county',
+  region:             'tema_region',
+  level:              'assessment_level',
+  trainMission:       'train_mission',
+  missionNum:         'mission_num',
+  assessmentDatetime: 'assessment_datetime',
+  subName:            'sub_name',
+  dwellingType:       'dwelling_type',
+  incidentType:       'incident_type',
+  foundationOff:      'foundation_off',
+  detailsFoundation:  'details_foundation',
+  ownerRenter:        'owner_renter',
+  insurance:          'insurance_yesno',
+  notes:              'notes1',
+  parcelId:           'Parcel_ID',
+  parcelAddress:      'Parcel_Address',
+  parcelAppraisal:    'Parcel_Appraisal',
+  parcelDate:         'parcel_date',
+  floodZone:          'flood_zone',
+  floodZoneSubtype:   'Flood_Zone_Subtype',
+  dfirmId:            'DFIRM_ID',
+  softDelete:         'sofe_delete',
+};
+// Records flagged Yes here are soft-deleted in the source data and should
+// never surface anywhere in the app (list, map markers, popups, or mission
+// counts) — treated the same as if they didn't exist. Matches loosely
+// (case-insensitive "yes"/"y"/true/1) since the exact stored value/type
+// wasn't confirmed against the live schema.
+function isSoftDeleted(raw) {
+  if (raw === null || raw === undefined) return false;
+  const v = String(raw).trim().toLowerCase();
+  return v === 'yes' || v === 'y' || v === 'true' || v === '1';
+}
+// ════════════════════════════════════════════════════════════════
+//  DAMAGE LEVELS — the 5 FEMA-style Preliminary Damage Assessment
+//  categories used by this program. Colors/labels match the existing
+//  ArcGIS Online popup + symbology exactly so the mobile app and the
+//  desktop map look like the same product. Icons are drawn inline as
+//  SVG (a simple house glyph in a colored circle) rather than fetched
+//  images, so the app stays self-contained and works offline.
+// ════════════════════════════════════════════════════════════════
+// `bg` is the true level color, used for badges/markers/strips where it sits
+// against `txt` (chosen for contrast against `bg` itself), not against the
+// page background. `text` is a separate variant safe to use as literal text
+// color on the app's white/light card backgrounds — `bg` itself fails
+// contrast badly for "major" (2.3:1) and "minor" (1.4:1) since both are
+// bright yellow/orange; `text` darkens just those two enough to pass WCAG AA
+// (~4.5:1) while the others already pass using `bg` as-is.
+const DAMAGE_LEVELS = {
+  destroyed:    { label: 'Destroyed',    bg: '#C52200', txt: '#FFFFFF', text: '#C52200', order: 0 },
+  major:        { label: 'Major',        bg: '#E89D00', txt: '#000000', text: '#8a5a00', order: 1 },
+  minor:        { label: 'Minor',        bg: '#FFD900', txt: '#000000', text: '#8a6900', order: 2 },
+  affected:     { label: 'Affected',     bg: '#7A26A2', txt: '#FFFFFF', text: '#7A26A2', order: 3 },
+  inaccessible: { label: 'Inaccessible', bg: '#007BC4', txt: '#FFFFFF', text: '#007BC4', order: 4 },
+};
+// Map the raw assessment_level text into one of the 5 keys above.
+// Exact (case-insensitive) match first — falls back to substring match
+// in case the source data has minor variants — then null for anything
+// unrecognized so it renders under a neutral "Unclassified" style.
+function normaliseLevel(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (DAMAGE_LEVELS[s]) return s;
+  for (const key of Object.keys(DAMAGE_LEVELS)) {
+    if (s.includes(key)) return key;
+  }
+  return null;
+}
+// Inline SVG house-in-a-circle icon for a damage level. `size` is the
+// pixel width/height. Unknown/missing levels get a neutral gray circle
+// with a white house so unclassified records are still visible on the
+// map rather than invisible.
+function iconHTML(key, size) {
+  const lvl = DAMAGE_LEVELS[key];
+  const bg = lvl ? lvl.bg : '#9aa1ab';
+  const fg = lvl ? lvl.txt : '#ffffff';
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" role="img" aria-hidden="true">
+    <circle cx="12" cy="12" r="12" fill="${bg}"/>
+    <path d="M12 4.6 3.8 11.4V20h5.7v-6.1h5v6.1h5.7v-8.6L12 4.6Z" fill="${fg}"/>
+    <rect x="10.15" y="15.2" width="3.7" height="4.8" rx="0.4" fill="${bg}"/>
+  </svg>`;
+}
+// ════════════════════════════════════════════════════════════════
+//  BOUNDARY LAYERS — TN House / Senate / Congressional districts, plus
+//  US Census Tracts. Toggled one-at-a-time from the filter drawer (see
+//  "BOUNDARY LAYERS UI" below); tapping a boundary polygon spatially
+//  joins it against the *currently scoped* (mission-filtered) assessment
+//  points client-side (see pointInGeoJsonGeometry()) and shows a full
+//  damage-level + dwelling-type breakdown in a popup.
+//  ------------------------------------------------------------------
+//  House/Senate/Congress live on the same token-secured org as the PDA
+//  feature service itself (tokenRequired: true) — their field schema
+//  couldn't be introspected directly from this sandbox (403 without a
+//  token, same situation the PDA schema itself ran into), so it was
+//  confirmed by the user pulling a sample query result/field list from
+//  each layer directly:
+//    House/Senate: OBJECTID, DISTRICT (zero-padded string, e.g. "01"),
+//      NAME (the incumbent's title + name, e.g. "Senator Adam Lowe" —
+//      already reads naturally as a sub-header, no separate "Senator:"
+//      label needed), POPULATION, LongName ("District 1"),
+//      District_Filter, First_Year, Title, Leadership_Position,
+//      Committees, Shape__Area/Length.
+//    Congress: only OBJECTID, DISTRICT (unpadded, e.g. "1"), NAME, and
+//      POPULATION were confirmed present — no LongName/District_Filter
+//      seen, so its header is built from DISTRICT directly rather than
+//      relying on a longNameField that may not exist.
+//  Census Tracts is Esri's public "USA Census Tracts" Living Atlas layer
+//  (no token) — STATE_ABBR/STATE_FIPS/COUNTY_FIPS/TRACT_FIPS/FIPS plus
+//  POPULATION (2022) and SQMI. It also has real geographic scale limits
+//  the other three don't: ~1,700+ tracts statewide, and the layer's own
+//  minScale (3,000,000) already hides it when zoomed out. Loading the
+//  whole state at once would be both slow and pointless at that zoom, so
+//  tracts use mode:'viewport' (bbox query, refetched on moveend) instead
+//  of mode:'full' (fetch the whole layer once) like the other three —
+//  see showBoundaryLayer() below for how the two modes differ.
+// ════════════════════════════════════════════════════════════════
+const BOUNDARY_LAYERS = {
+  house: {
+    label:          'TN House Districts',
+    shortLabel:     'TN House',
+    unitLabel:      'district',
+    url:            'https://services1.arcgis.com/kILp9lqGUeOhnDbI/arcgis/rest/services/HouseDistricts_ExportFeature/FeatureServer/0',
+    idField:        'DISTRICT',
+    nameField:      'NAME',
+    longNameField:  'LongName',
+    popField:       'POPULATION',
+    color:          '#1565C0',
+    mode:           'full',
+    tokenRequired:  true,
+  },
+  senate: {
+    label:          'TN Senate Districts',
+    shortLabel:     'TN Senate',
+    unitLabel:      'district',
+    url:            'https://services1.arcgis.com/kILp9lqGUeOhnDbI/arcgis/rest/services/TN_Senate_District/FeatureServer/0',
+    idField:        'DISTRICT',
+    nameField:      'NAME',
+    longNameField:  'LongName',
+    popField:       'POPULATION',
+    color:          '#6D4C41',
+    mode:           'full',
+    tokenRequired:  true,
+  },
+  congress: {
+    label:          'US Congressional Districts',
+    shortLabel:     'US Congressional',
+    unitLabel:      'district',
+    url:            'https://services1.arcgis.com/kILp9lqGUeOhnDbI/arcgis/rest/services/TN_Congressional_Districts_Update/FeatureServer/0',
+    idField:        'DISTRICT',
+    nameField:      'NAME',
+    longNameField:  null, // not confirmed present on this layer — see note above
+    popField:       'POPULATION',
+    color:          '#00838F',
+    mode:           'full',
+    tokenRequired:  true,
+  },
+  tract: {
+    label:          'Census Tracts',
+    shortLabel:     'Census Tracts',
+    unitLabel:      'tract',
+    url:            'https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Census_Tracts/FeatureServer/0',
+    idField:        'FIPS',
+    popField:       'POPULATION',
+    color:          '#616161',
+    mode:           'viewport',
+    stateFilter:    "STATE_ABBR='TN'",
+    minZoom:        10, // below this, defer to the hint badge instead of pulling a huge/pointless bbox of tracts
+    tokenRequired:  false,
+  },
+};
+// ════════════════════════════════════════════════════════════════
+//  AUTH — OAuth 2.0 with PKCE + silent refresh
+//  --------------------------------------------------------------
+//  Token shape (what we cache):
+//    { accessToken, refreshToken, expiresAt, refreshExpiresAt, username }
+//  expiresAt / refreshExpiresAt are absolute epoch ms so we can check
+//  freshness without re-deriving from the AGOL response.
+// ════════════════════════════════════════════════════════════════
+let TOKEN = null;
+// ── PKCE helpers ─────────────────────────────────────────────────
+function _randomString(byteLen = 48) {
+  const arr = new Uint8Array(byteLen);
+  crypto.getRandomValues(arr);
+  return _base64url(arr);
+}
+function _base64url(buf) {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let str = '';
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function _sha256base64url(s) {
+  const buf  = new TextEncoder().encode(s);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return _base64url(new Uint8Array(hash));
+}
+// ── Token cache helpers ──────────────────────────────────────────
+function loadStoredToken() {
+  try {
+    const raw = localStorage.getItem(CONFIG.tokenKey);
+    if (!raw) return null;
+    const t = JSON.parse(raw);
+    if (!t.accessToken || !t.expiresAt) return null;
+    return t;
+  } catch { return null; }
+}
+function saveToken(t) {
+  TOKEN = t;
+  localStorage.setItem(CONFIG.tokenKey, JSON.stringify(t));
+}
+function clearStoredToken() {
+  TOKEN = null;
+  localStorage.removeItem(CONFIG.tokenKey);
+  // Clear PKCE breadcrumbs too so a half-finished flow doesn't haunt us
+  sessionStorage.removeItem('oauth_verifier');
+  sessionStorage.removeItem('oauth_state');
+}
+function _tokenFromResponse(data) {
+  // AGOL returns access_token, expires_in (seconds), refresh_token,
+  // refresh_token_expires_in (seconds), username, ssl. expires_in can
+  // arrive as a number OR a string depending on the org config.
+  const now = Date.now();
+  const expSec  = Number(data.expires_in) || 7200;
+  const refSec  = Number(data.refresh_token_expires_in) || 0;
+  return {
+    accessToken:      data.access_token,
+    refreshToken:     data.refresh_token || (TOKEN && TOKEN.refreshToken) || null,
+    expiresAt:        now + expSec * 1000,
+    refreshExpiresAt: refSec ? now + refSec * 1000 : (TOKEN && TOKEN.refreshExpiresAt) || null,
+    username:         data.username || (TOKEN && TOKEN.username) || null,
+  };
+}
+// Detect whether the app is loaded inside an iframe (e.g. Experience
+// Builder). Uses a try/catch because cross-origin parents throw when
+// you read window.top in some browsers.
+function isInIframe() {
+  try { return window.self !== window.top; } catch { return true; }
+}
+// Pre-built authorize URL (with PKCE values stashed in sessionStorage)
+// so the popup AND the fallback "open in new tab" link share the same
+// verifier — otherwise whichever one the user clicks second would have
+// stale PKCE values and the token exchange would fail.
+let _preparedAuthUrl = null;
+// ── OAuth flow: kick off the authorize step ──────────────────────
+//   • Standalone (regular tab): redirect the whole page.
+//   • Embedded in an iframe (Experience Builder): redirect inside the
+//     iframe is blocked because AGOL's login page sets X-Frame-Options.
+//     Instead, we open a popup window (top-level browser context) and
+//     pipe the auth code back via postMessage.
+//
+// IMPORTANT: when opening a popup, window.open() must run in the same
+// synchronous tick as the user's click — otherwise the browser sees it
+// as "programmatic" and blocks it. That's why this function is NOT
+// async at the top level: it opens the popup first (sync), then does
+// the async crypto in a follow-up Promise that navigates the popup to
+// the actual auth URL once it's ready.
+function startOAuthFlow() {
+  if (isInIframe()) {
+    // Sync: open the popup immediately while we still have user
+    // activation. We point it at about:blank because the auth URL
+    // isn't ready yet — the PKCE challenge is async.
+    const w = 540, h = 720;
+    const left = Math.max(0, (screen.width  - w) / 2);
+    const top  = Math.max(0, (screen.height - h) / 2);
+    const popup = window.open(
+      'about:blank', 'preds_pda_oauth',
+      `width=${w},height=${h},left=${left},top=${top},toolbar=0,menubar=0,scrollbars=1`
+    );
+    if (!popup) {
+      setLoginError('Popup was blocked — please allow popups for this site, then click Sign in again.');
+      return;
+    }
+    // Show a loading hint inside the popup while we prep the auth URL
+    try {
+      popup.document.write(
+        '<!doctype html><meta charset="utf-8"><title>Signing in…</title>' +
+        '<style>body{font-family:system-ui,sans-serif;padding:40px;text-align:center;color:#333;background:#f0f2f5}' +
+        '.s{margin-top:20px;color:#666;font-size:13px}</style>' +
+        '<div><strong>Connecting to ArcGIS Online…</strong><div class="s">One moment.</div></div>'
+      );
+    } catch { /* cross-origin popup just before nav — fine to ignore */ }
+    // Use the URL pre-built when the login screen mounted if we have
+    // one — keeps PKCE values consistent with the fallback link. Else
+    // build a fresh one.
+    const urlPromise = _preparedAuthUrl
+      ? Promise.resolve(_preparedAuthUrl)
+      : _buildAuthorizeUrl();
+    urlPromise
+      .then(url => { popup.location.href = url; })
+      .catch(err => {
+        try { popup.close(); } catch {}
+        console.error('OAuth start failed:', err);
+        setLoginError('Could not start sign-in. ' + (err.message || ''));
+      });
+    _waitForOAuthResult(popup);
+  } else {
+    // Standalone — full-page redirect
+    const urlPromise = _preparedAuthUrl
+      ? Promise.resolve(_preparedAuthUrl)
+      : _buildAuthorizeUrl();
+    urlPromise
+      .then(url => { window.location.href = url; })
+      .catch(err => {
+        console.error('OAuth start failed:', err);
+        setLoginError('Could not start sign-in. ' + (err.message || ''));
+      });
+  }
+}
+// Generate PKCE values, store them, and return the AGOL authorize URL.
+async function _buildAuthorizeUrl() {
+  const verifier  = _randomString(48);
+  const challenge = await _sha256base64url(verifier);
+  const state     = _randomString(16);
+  sessionStorage.setItem('oauth_verifier', verifier);
+  sessionStorage.setItem('oauth_state',    state);
+  const params = new URLSearchParams({
+    client_id:             CONFIG.clientId,
+    response_type:         'code',
+    redirect_uri:          CONFIG.redirectUri,
+    code_challenge:        challenge,
+    code_challenge_method: 'S256',
+    expiration:            String(CONFIG.tokenExpirationMinutes),
+    state,
+  });
+  return `${CONFIG.authorizeUrl}?${params}`;
+}
+// Listen for the popup posting its auth result back, exchange the code
+// for tokens, and hand off to startApp().
+function _waitForOAuthResult(popup) {
+  let settled = false;
+  const cleanup = () => {
+    window.removeEventListener('message', onMessage);
+    clearInterval(closedTimer);
+  };
+  const onMessage = async (event) => {
+    if (event.origin !== window.location.origin) return;
+    if (!event.data || event.data.type !== 'preds_pda_oauth') return;
+    settled = true;
+    cleanup();
+    if (event.data.error) {
+      setLoginError(event.data.error_description || event.data.error);
+      return;
+    }
+    try {
+      const tok = await exchangeCodeForToken(event.data.code);
+      saveToken(tok);
+      hideLogin();
+      startApp();
+    } catch (err) {
+      console.error('Token exchange failed:', err);
+      setLoginError(err.message || 'Sign-in failed.');
+    }
+  };
+  window.addEventListener('message', onMessage);
+  const closedTimer = setInterval(() => {
+    if (popup.closed && !settled) {
+      cleanup();
+      // Don't show an error if the user just dismissed it
+    }
+  }, 500);
+}
+// ── OAuth flow: exchange the authorization code for tokens ──────
+async function exchangeCodeForToken(code) {
+  const verifier = sessionStorage.getItem('oauth_verifier');
+  if (!verifier) throw new Error('Missing PKCE verifier — please sign in again.');
+  const params = new URLSearchParams({
+    client_id:     CONFIG.clientId,
+    grant_type:    'authorization_code',
+    code,
+    redirect_uri:  CONFIG.redirectUri,
+    code_verifier: verifier,
+    f:             'json',
+  });
+  const res  = await fetch(CONFIG.tokenUrl, { method: 'POST', body: params });
+  const data = await res.json();
+  if (data.error) {
+    const msg = (data.error.details && data.error.details[0]) || data.error.message || 'Sign-in failed';
+    throw new Error(msg);
+  }
+  if (!data.access_token) throw new Error('No access token returned');
+  // Done with the verifier — clean up so it can't be replayed
+  sessionStorage.removeItem('oauth_verifier');
+  sessionStorage.removeItem('oauth_state');
+  return _tokenFromResponse(data);
+}
+// ── Silent refresh ──────────────────────────────────────────────
+async function refreshAccessToken() {
+  if (!TOKEN || !TOKEN.refreshToken) throw new Error('No refresh token available');
+  if (TOKEN.refreshExpiresAt && Date.now() > TOKEN.refreshExpiresAt) {
+    throw new Error('Refresh token expired');
+  }
+  const params = new URLSearchParams({
+    client_id:     CONFIG.clientId,
+    grant_type:    'refresh_token',
+    refresh_token: TOKEN.refreshToken,
+    f:             'json',
+  });
+  const res  = await fetch(CONFIG.tokenUrl, { method: 'POST', body: params });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || 'Token refresh failed');
+  if (!data.access_token) throw new Error('No access token in refresh response');
+  return _tokenFromResponse(data);
+}
+// Ensure the in-memory access token is fresh; refresh it if it's near
+// expiry. Throws if refresh fails — callers should fall back to login.
+async function ensureFreshToken() {
+  if (!TOKEN) throw new Error('Not signed in');
+  if (TOKEN.expiresAt && Date.now() < TOKEN.expiresAt - CONFIG.refreshBufferMs) return;
+  const fresh = await refreshAccessToken();
+  saveToken(fresh);
+}
+// ════════════════════════════════════════════════════════════════
+//  LOGIN UI
+// ════════════════════════════════════════════════════════════════
+const loginScreen = () => document.getElementById('login-screen');
+const appShell    = () => document.getElementById('app');
+function showLogin() {
+  loginScreen().hidden = false;
+  appShell().hidden = true;
+  setTimeout(() => {
+    const btn = document.getElementById('oauth-signin-btn');
+    if (btn) btn.focus();
+  }, 80);
+  // Pre-build the OAuth authorize URL so the "Open in a new tab"
+  // fallback link is a real <a href=...> the moment the user clicks it
+  // — anchor clicks with target=_blank are exempt from popup blockers
+  // (unlike JS-driven window.open after an async crypto step). Only
+  // shown when the app is embedded; standalone uses a full-page redirect.
+  const fallback = document.getElementById('oauth-fallback');
+  if (fallback) {
+    if (isInIframe()) {
+      _buildAuthorizeUrl().then(url => {
+        _preparedAuthUrl = url;
+        fallback.href = url;
+        fallback.hidden = false;
+      }).catch(err => {
+        console.warn('Could not pre-build auth URL:', err);
+      });
+    } else {
+      fallback.hidden = true;
+    }
+  }
+}
+function hideLogin() {
+  loginScreen().hidden = true;
+  // Note: #app itself stays hidden — it's revealed by revealApp() once the
+  // user picks a mission on the mission-screen, not immediately on login.
+}
+function revealApp() {
+  appShell().hidden = false;
+  if (map) map.invalidateSize();
+}
+function setLoginError(msg) {
+  const el = document.getElementById('login-error');
+  if (!el) return;
+  if (!msg) { el.classList.remove('visible'); el.textContent = ''; return; }
+  el.classList.add('visible');
+  el.textContent = msg;
+}
+function confirmLogout() {
+  if (!confirm('Sign out and clear the cached session?')) return;
+  clearStoredToken();
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  showLogin();
+}
+// Handle the OAuth redirect callback. Returns true if we consumed a
+// `?code=...` from the URL, false if the page loaded normally.
+//
+// Two modes:
+//   • Popup mode (window.opener exists): we're the popup that AGOL
+//     just bounced back to with the auth code. Send the code to the
+//     opener (the embedded app) via postMessage and close the popup.
+//   • Top-level mode: we're the standalone app — exchange the code
+//     ourselves and proceed.
+async function handleOAuthCallback() {
+  const url = new URL(window.location.href);
+  const code  = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  const error = url.searchParams.get('error');
+  if (!code && !error) return false;
+  // Popup branch — relay to opener and close.
+  if (window.opener && window.opener !== window) {
+    try {
+      window.opener.postMessage({
+        type:               'preds_pda_oauth',
+        code,
+        state,
+        error,
+        error_description:  url.searchParams.get('error_description') || null,
+      }, window.location.origin);
+    } catch (e) { console.error('postMessage to opener failed:', e); }
+    // Give the parent a tick to receive the message, then close
+    setTimeout(() => { try { window.close(); } catch {} }, 50);
+    // Show a brief "you can close this" message in case window.close fails
+    document.body.innerHTML = '<div style="font-family:DM Sans,sans-serif;padding:40px;text-align:center;color:#333">Sign-in complete. You can close this window.</div>';
+    return true;  // don't continue normal app boot
+  }
+  // Standalone branch — exchange the code in this same page.
+  if (error) {
+    setLoginError(`Sign-in error: ${url.searchParams.get('error_description') || error}`);
+    history.replaceState({}, '', url.pathname);
+    return false;
+  }
+  // CSRF check — the state we sent must match what came back
+  const expectedState = sessionStorage.getItem('oauth_state');
+  if (expectedState && state !== expectedState) {
+    setLoginError('Sign-in failed: state mismatch. Please try again.');
+    history.replaceState({}, '', url.pathname);
+    return false;
+  }
+  try {
+    const tok = await exchangeCodeForToken(code);
+    saveToken(tok);
+    history.replaceState({}, '', url.pathname);
+    return true;
+  } catch (err) {
+    console.error('Token exchange failed:', err);
+    setLoginError(err.message || 'Sign-in failed.');
+    history.replaceState({}, '', url.pathname);
+    return false;
+  }
+}
+// ════════════════════════════════════════════════════════════════
+//  DATA FETCHING
+// ════════════════════════════════════════════════════════════════
+// The OBJECTID is critical for attachment lookups but its exact key casing
+// can differ from what we requested (some hosted views — especially joined
+// ones — echo it back under a slightly different name/case than the plain
+// "OBJECTID" we asked for). Fall back to a case-insensitive scan rather
+// than silently carrying an undefined id through to a broken /undefined/
+// attachments request later.
+function resolveObjectId(p) {
+  const direct = p[FIELDS.objectId];
+  if (direct !== undefined && direct !== null) return direct;
+  const key = Object.keys(p).find(k => /^objectid$/i.test(k));
+  return key ? p[key] : undefined;
+}
+function featureToAsset(feature) {
+  const p   = feature.attributes;
+  const lat = feature.geometry ? feature.geometry.y : null;
+  const lng = feature.geometry ? feature.geometry.x : null;
+  const levelKey = normaliseLevel(p[FIELDS.level]);
+  return {
+    objectId:           resolveObjectId(p),
+    address:            p[FIELDS.address]            || 'Unknown address',
+    suiteApt:           p[FIELDS.suiteApt]            || '',
+    city:               p[FIELDS.city]                || '',
+    state:              p[FIELDS.state]               || 'TN',
+    zip:                p[FIELDS.zip]                 || '',
+    county:             p[FIELDS.county]              || '',
+    region:             p[FIELDS.region]              || '',
+    levelRaw:           p[FIELDS.level]               || '',
+    level:              levelKey,
+    trainMission:       p[FIELDS.trainMission]        || '',
+    missionNum:         p[FIELDS.missionNum]          || '',
+    assessmentDatetime: p[FIELDS.assessmentDatetime]  ?? null,
+    subName:            p[FIELDS.subName]             || '',
+    dwellingType:       p[FIELDS.dwellingType]        || '',
+    incidentType:       p[FIELDS.incidentType]        || '',
+    foundationOff:      p[FIELDS.foundationOff]       || '',
+    detailsFoundation:  p[FIELDS.detailsFoundation]   || '',
+    ownerRenter:        p[FIELDS.ownerRenter]         || '',
+    insurance:          p[FIELDS.insurance]           || '',
+    notes:              p[FIELDS.notes]               || '',
+    parcelId:           p[FIELDS.parcelId]            || '',
+    parcelAddress:      p[FIELDS.parcelAddress]       || '',
+    parcelAppraisal:    p[FIELDS.parcelAppraisal]     ?? null,
+    parcelDate:         p[FIELDS.parcelDate]          ?? null,
+    floodZone:          p[FIELDS.floodZone]           || '',
+    floodZoneSubtype:   p[FIELDS.floodZoneSubtype]    || '',
+    dfirmId:            p[FIELDS.dfirmId]             || '',
+    softDelete:         p[FIELDS.softDelete]          ?? null,
+    lat, lng,
+    distance:           null,
+  };
+}
+async function arcgisFetch(url, _retried) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.error) {
+    // 498 = invalid token, 499 = token required.
+    // If we have a refresh token, try refreshing once and retry the call
+    // before bouncing the user back to the login screen.
+    if ((data.error.code === 498 || data.error.code === 499) && !_retried && TOKEN && TOKEN.refreshToken) {
+      try {
+        const fresh = await refreshAccessToken();
+        saveToken(fresh);
+        const newUrl = url.replace(/([?&]token=)[^&]+/, `$1${encodeURIComponent(fresh.accessToken)}`);
+        return arcgisFetch(newUrl, true);
+      } catch (e) {
+        // Fall through to expired-token handling below
+      }
+    }
+    if (data.error.code === 498 || data.error.code === 499) {
+      const err = new Error('Token expired or invalid');
+      err.tokenExpired = true;
+      throw err;
+    }
+    throw new Error(`ArcGIS error ${data.error.code}: ${data.error.message}`);
+  }
+  return data;
+}
+async function fetchAssets() {
+  if (!TOKEN) { showLogin(); return; }
+  // Refresh proactively so background ticks don't fail with 498 first
+  try { await ensureFreshToken(); }
+  catch (err) {
+    console.warn('Token refresh failed before fetch:', err);
+    clearStoredToken();
+    showLogin();
+    return;
+  }
+  setLoadingState(true);
+  const outFields = Object.values(FIELDS).join(',');
+  // AGOL hosted feature services cap a single query at maxRecordCount
+  // (default 1,000 or 2,000 depending on org). To pull every record we
+  // page with resultOffset until either the server reports it has no
+  // more (`exceededTransferLimit === false`) or returns an empty page.
+  // We use a generous page size so the average dataset finishes in 1–3
+  // round-trips; the server will silently cap to its own limit anyway.
+  const pageSize = 2000;
+  try {
+    const allFeatures = [];
+    let offset = 0;
+    let more = true;
+    let safety = 50;   // hard cap: never make more than 50 paged requests
+    while (more && safety-- > 0) {
+      const params = new URLSearchParams({
+        where:             '1=1',
+        outFields,
+        returnGeometry:    'true',
+        outSR:             '4326',
+        f:                 'json',
+        resultOffset:      String(offset),
+        resultRecordCount: String(pageSize),
+        token:             TOKEN.accessToken,
+      });
+      const data = await arcgisFetch(`${CONFIG.serviceUrl}/query?${params}`);
+      const feats = data.features || [];
+      allFeatures.push(...feats);
+      // Update the count progressively so the user sees data flowing in
+      document.getElementById('list-count').textContent = `Loading… ${allFeatures.length}`;
+      // Two ways to know we're done: server says "no more" (preferred),
+      // or we got fewer rows than we asked for (fallback).
+      more = (data.exceededTransferLimit === true) || (feats.length === pageSize);
+      offset += feats.length;
+      if (feats.length === 0) break;
+    }
+    if (safety <= 0) console.warn('[Preds PDA] paging hit safety cap — some records may not have loaded');
+    // Diagnostic: log the field names on the first feature so it's easy
+    // to confirm the view is actually returning the fields we expect.
+    // Open DevTools console to see this.
+    if (allFeatures.length) {
+      console.info('[Preds PDA] first feature attribute keys:', Object.keys(allFeatures[0].attributes || {}));
+    }
+    const raw = allFeatures.map(featureToAsset)
+                  .filter(a => Number.isFinite(a.lat) && Number.isFinite(a.lng))
+                  .filter(a => !isSoftDeleted(a.softDelete));
+    assets = raw.map((a, idx) => ({
+      ...a,
+      id: `a${idx}`,
+      distance: (userLat !== null) ? haversine(userLat, userLng, a.lat, a.lng) : null,
+    }));
+    setLoadingState(false);
+    setOfflineBanner(false);
+    cacheData(assets);
+    applyMissionsAndRender(false);
+    // Covers assessments added since the last fetch (including the 5-min
+    // auto-refresh) — already-warmed ones are filtered out inside
+    // scheduleTileWarm() itself, so this is cheap to call every time, not
+    // just right after a mission is picked. See "OFFLINE MAP TILE CACHING".
+    scheduleTileWarm(scopedAssets());
+  } catch (err) {
+    console.error('Fetch failed:', err);
+    setLoadingState(false);
+    if (err.tokenExpired) {
+      // Token died — push back to login, but keep last-known data on screen
+      clearStoredToken();
+      hideMissionScreen();
+      alert('Your session has expired. Please sign in again.');
+      showLogin();
+      return;
+    }
+    // Network error — fall back to cached data if any
+    const cached = loadCachedData();
+    if (cached && cached.assets && cached.assets.length) {
+      assets = cached.assets
+        .filter(a => !isSoftDeleted(a.softDelete))
+        .map(a => ({
+          ...a,
+          distance: (userLat !== null) ? haversine(userLat, userLng, a.lat, a.lng) : a.distance,
+        }));
+      applyMissionsAndRender(true, cached.ts);
+      setOfflineBanner(true);
+    } else {
+      // Nothing to pick a mission from — skip the picker and show the
+      // error/retry state directly in the normal app shell instead of
+      // leaving the user stuck on a perpetual "Loading missions…" screen.
+      hideMissionScreen();
+      revealApp();
+      showError(`Could not load assessments.<br><small>${err.message}</small>`);
+    }
+  }
+}
+// ── Attachments ─────────────────────────────────────────────────
+// Layer capability flag — set the first time fetchLayerMeta() runs.
+// `null` means "haven't checked yet"; `true`/`false` is the answer.
+let LAYER_HAS_ATTACHMENTS = null;
+let LAYER_META_ERROR = null;
+async function fetchLayerMeta() {
+  if (LAYER_HAS_ATTACHMENTS !== null) return;
+  if (!TOKEN) return;
+  const url = `${CONFIG.serviceUrl}?f=json&token=${encodeURIComponent(TOKEN.accessToken)}`;
+  try {
+    const data = await arcgisFetch(url);
+    LAYER_HAS_ATTACHMENTS = data.hasAttachments === true;
+    console.info('[Preds PDA] layer hasAttachments =', LAYER_HAS_ATTACHMENTS);
+  } catch (err) {
+    LAYER_META_ERROR = err.message || String(err);
+    console.warn('[Preds PDA] failed to read layer metadata:', err);
+  }
+}
+// Shared attachment cache — the map popup and the detail sheet both need
+// attachment info for the same OBJECTID, so fetch once and reuse. Keyed by
+// objectId; each entry is { status: 'loading'|'done', result, promise }.
+// `status` (rather than just presence-in-Map) lets callers tell "still
+// fetching" apart from "fetched, turned out empty/errored" so a popup
+// doesn't get stuck showing "Loading…" forever after a failed fetch.
+const attachmentCache = new Map();
+function getAttachmentInfoCached(objectId) {
+  const existing = attachmentCache.get(objectId);
+  if (existing) return existing.status === 'done' ? Promise.resolve(existing.result) : existing.promise;
+  const entry = { status: 'loading', result: null, promise: null };
+  entry.promise = fetchAttachmentInfo(objectId).then(result => {
+    entry.status = 'done';
+    entry.result = result;
+    return result;
+  });
+  attachmentCache.set(objectId, entry);
+  return entry.promise;
+}
+async function fetchAttachmentInfo(objectId) {
+  if (!TOKEN) return { state: 'error', message: 'Not signed in', infos: [] };
+  if (objectId === undefined || objectId === null) {
+    // Don't even try — a missing OBJECTID means the source query never
+    // resolved one for this record (see resolveObjectId()), so any request
+    // built from it would just hit /undefined/attachments and come back
+    // with a confusing generic 400. Fail clearly instead.
+    return {
+      state:    'error',
+      message:  'This record has no OBJECTID on file, so attachments can\'t be looked up. Try refreshing the data.',
+      infos:    [],
+      debugLog: ['objectId was undefined/null — the query never returned a usable OBJECTID for this record.'],
+    };
+  }
+  try { await ensureFreshToken(); }
+  catch (err) { return { state: 'error', message: 'Session expired — sign in again', infos: [] }; }
+  // Diagnostic: log everything about the attempt so we can see exactly
+  // what the server returned. Open DevTools → Console to read this.
+  console.group(`[Preds PDA] attachments: objectId=${objectId}`);
+  console.info('serviceUrl:', CONFIG.serviceUrl);
+  console.info('LAYER_HAS_ATTACHMENTS:', LAYER_HAS_ATTACHMENTS);
+  // Try in order of reliability: queryAttachments (works on most views),
+  // then the per-feature /attachments endpoint as a fallback. We DON'T
+  // gate on LAYER_HAS_ATTACHMENTS — that flag is sometimes wrong on
+  // views, and it's better to attempt the query and show a real error
+  // than to silently say "no attachments".
+  const attempts = [
+    {
+      name: 'queryAttachments',
+      url: `${CONFIG.serviceUrl}/queryAttachments?` + new URLSearchParams({
+        objectIds: String(objectId),
+        returnUrl: 'true',
+        f:         'json',
+        token:     TOKEN.accessToken,
+      }),
+      parse: (data) => {
+        const groups = data.attachmentGroups || [];
+        const group  = groups.find(g => String(g.parentObjectId) === String(objectId)) || groups[0];
+        return (group && group.attachmentInfos) || [];
+      },
+    },
+    {
+      name: 'per-feature /attachments',
+      url: `${CONFIG.serviceUrl}/${objectId}/attachments?f=json&token=${encodeURIComponent(TOKEN.accessToken)}`,
+      parse: (data) => data.attachmentInfos || [],
+    },
+  ];
+  let lastErr = null;
+  const debugLog = [];   // surfaced in the UI when infos end up empty, so a
+                          // field user without DevTools can still tell us
+                          // exactly what each endpoint returned.
+  for (const attempt of attempts) {
+    console.info(`trying ${attempt.name}:`, attempt.url);
+    try {
+      const res = await fetch(attempt.url);
+      const data = await res.json();
+      console.info(`${attempt.name} response:`, data);
+      if (data.error) {
+        // ArcGIS often puts the actually-useful explanation in `details`
+        // rather than `message` (e.g. a generic "Invalid Request" message
+        // with the real reason in details[0]) — include both so nothing
+        // gets lost.
+        const detailsTxt = (data.error.details && data.error.details.length) ? ` — ${data.error.details.join('; ')}` : '';
+        lastErr = new Error(`${attempt.name}: ${data.error.code} ${data.error.message || ''}${detailsTxt}`.trim());
+        debugLog.push(`${attempt.name}: HTTP/error ${data.error.code} ${data.error.message || ''}${detailsTxt}`);
+        continue;
+      }
+      const raw = attempt.parse(data) || [];
+      console.info(`${attempt.name} parsed ${raw.length} attachment(s)`);
+      debugLog.push(`${attempt.name}: ${raw.length} attachment(s)`);
+      if (raw.length === 0) {
+        // This endpoint responded with no error but found nothing — don't
+        // stop here. queryAttachments can come back empty on some hosted
+        // *views* (its attachmentGroups→parentObjectId matching doesn't
+        // always line up), while the per-feature endpoint on the same
+        // OBJECTID still works. Keep trying the remaining attempts before
+        // concluding there really are no attachments.
+        continue;
+      }
+      const infos = raw.map(a => {
+        let attUrl = a.url || `${CONFIG.serviceUrl}/${objectId}/attachments/${a.id}`;
+        if (!/[?&]token=/.test(attUrl)) {
+          attUrl += (attUrl.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN.accessToken);
+        }
+        return {
+          id:          a.id,
+          name:        a.name,
+          contentType: a.contentType,
+          size:        a.size,
+          url:         attUrl,
+          isImage:     (a.contentType || '').startsWith('image/'),
+        };
+      });
+      console.groupEnd();
+      return { state: 'ok', infos, debugLog };
+    } catch (err) {
+      console.warn(`${attempt.name} threw:`, err);
+      lastErr = err;
+      debugLog.push(`${attempt.name}: threw ${err.message || err}`);
+    }
+  }
+  console.groupEnd();
+  if (!lastErr) {
+    // Every attempt responded cleanly but every one came back empty — most
+    // likely genuinely no attachments, but keep the debug log around in
+    // case that's wrong for this record too.
+    return { state: 'ok', infos: [], debugLog };
+  }
+  return {
+    state:   'error',
+    message: lastErr.message,
+    infos:   [],
+    debugLog,
+  };
+}
+// ── Cache (offline support) ─────────────────────────────────────
+function cacheData(list) {
+  try {
+    const payload = { ts: Date.now(), assets: list };
+    localStorage.setItem(CONFIG.cacheKey, JSON.stringify(payload));
+  } catch (e) { /* quota — ignore */ }
+}
+function loadCachedData() {
+  try {
+    const raw = localStorage.getItem(CONFIG.cacheKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+// Last-known GPS fix, kept separately from the asset cache above so it
+// survives independently — e.g. a field user who loaded the mission days
+// ago and is now offline still gets *a* location (theirs from last time)
+// instead of losing distance sorting/filtering entirely. See
+// useLastKnownLocation() in the GEOLOCATION section.
+function cacheLocation(lat, lng) {
+  try {
+    localStorage.setItem(CONFIG.locationKey, JSON.stringify({ lat, lng, ts: Date.now() }));
+  } catch (e) { /* quota — ignore */ }
+}
+function loadCachedLocation() {
+  try {
+    const raw = localStorage.getItem(CONFIG.locationKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+// ── Status helpers ──────────────────────────────────────────────
+function setLoadingState(loading) {
+  document.getElementById('loading-bar').style.display = loading ? 'block' : 'none';
+  if (loading && assets.length === 0) document.getElementById('list-count').textContent = 'Loading…';
+}
+function updateLastRefreshed(stale, ts) {
+  const when = stale && ts ? new Date(ts) : new Date();
+  const t = when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  document.getElementById('last-refreshed').innerHTML = `Updated ${t}${stale ? ' <span class="stale-badge">CACHED</span>' : ''}`;
+}
+function setOfflineBanner(on) {
+  document.getElementById('offline-banner').hidden = !on;
+}
+function showError(msg) {
+  document.getElementById('asset-list').innerHTML =
+    `<div class="empty-state"><div class="icon">⚠️</div><p>${msg}</p>
+     <button onclick="fetchAssets()" style="margin-top:14px;padding:10px 20px;background:var(--tema-blue);color:white;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Retry</button></div>`;
+}
+// ════════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════════
+let map, userMarker, userLat = null, userLng = null, userLocationStale = false;
+let markers = {}, assets = [];
+let activeFilter = 'all', activeBuffer = null, searchTerm = '', selectedId = null;
+// Boundary layers (House/Senate/Congress/Tracts) — see the BOUNDARY LAYERS
+// config block above and "BOUNDARY LAYERS UI/DATA" further down.
+let activeBoundary = null;        // null | 'house' | 'senate' | 'congress' | 'tract'
+let boundaryLayerGroup = null;    // the single Leaflet layer currently on the map for it
+let boundaryFullCache = {};       // key -> already-fetched GeoJSON FeatureCollection (house/senate/congress only — tract is viewport-scoped and never fully cached)
+let boundaryMoveHandler = null;   // bound map 'moveend' listener while the tract layer is active; removed when switched away
+let boundaryFetchToken = 0;       // bumped on every layer switch so a slow, now-stale fetch can't clobber a newer selection
+let renderedList = [];
+let refreshTimer = null;
+function getAsset(id) { return assets.find(a => String(a.id) === String(id)); }
+// ════════════════════════════════════════════════════════════════
+//  MISSIONS — assessments are grouped into deployments/missions via
+//  mission_num. On first load we scope the app to whichever mission has
+//  the most recent assessment_datetime (the active deployment), with a
+//  dropdown to switch to any other mission or back to "All missions".
+//  The underlying `assets` array always holds every mission's records;
+//  scopedAssets() is what the list and map actually render from.
+// ════════════════════════════════════════════════════════════════
+let missions = [];
+let activeMission = 'all';
+let missionInitialized = false;
+function missionKeyOf(a) {
+  const v = a.missionNum && String(a.missionNum).trim();
+  return v || '__unknown__';
+}
+function toEpoch(val) {
+  if (isBlank(val)) return null;
+  const d = new Date(val);
+  const t = d.getTime();
+  return isNaN(t) ? null : t;
+}
+// Mission numbers excluded from the mission picker's list of choices
+// (2026-08-13) — "999" is a placeholder/non-real mission number and
+// shouldn't show up as a selectable option. This only affects computeMissions()
+// below, i.e. what appears in the mission picker/pill — it does NOT filter
+// these assessments out of `assets` itself, so they still count toward
+// "All Missions" if that's selected; this just keeps a fake "Mission #999"
+// card from cluttering the picker.
+const EXCLUDED_MISSION_KEYS = new Set(['999']);
+function computeMissions() {
+  const map = new Map();
+  assets.forEach(a => {
+    const key = missionKeyOf(a);
+    if (EXCLUDED_MISSION_KEYS.has(key)) return;
+    if (!map.has(key)) map.set(key, { key, missionNum: a.missionNum || '', trainMission: a.trainMission || '', count: 0, latest: null });
+    const m = map.get(key);
+    m.count++;
+    const t = toEpoch(a.assessmentDatetime);
+    if (t !== null && (m.latest === null || t > m.latest)) m.latest = t;
+  });
+  missions = Array.from(map.values()).sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
+  // Default to the most-recently-active mission on first load. On later
+  // refreshes, only re-pick a default if the previously active mission
+  // vanished (e.g. it was a stale cache) — don't yank the user off a
+  // mission they deliberately selected just because a newer one showed up.
+  if (!missionInitialized) {
+    activeMission = missions.length ? missions[0].key : 'all';
+    missionInitialized = true;
+  } else if (activeMission !== 'all' && !missions.some(m => m.key === activeMission)) {
+    activeMission = missions.length ? missions[0].key : 'all';
+  }
+}
+// Splits a mission's info into the 3 display lines used on its picker
+// card: a name line ("Mission #7" / "Unassigned"), a last-entry line,
+// and an assessment-count line.
+function missionDisplay(m) {
+  const name = m.missionNum
+    ? `Mission #${m.missionNum}`
+    : (m.key === '__unknown__' ? 'Unassigned' : `Mission #${m.key}`);
+  const lastEntry = m.latest !== null
+    ? `Last entry: ${new Date(m.latest).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' })}`
+    : 'Last entry: —';
+  const count = `${m.count} assessment${m.count !== 1 ? 's' : ''}`;
+  return { name, lastEntry, count };
+}
+// Renders the full-screen mission picker's list of options. Shows a
+// loading placeholder if data hasn't arrived yet (first-ever load,
+// before the initial fetchAssets() resolves).
+function renderMissionScreenList() {
+  const list = document.getElementById('mission-screen-list');
+  if (!list) return;
+  if (!missionInitialized) {
+    list.innerHTML = '<div class="mission-screen-loading">Loading missions…</div>';
+    return;
+  }
+  const totalCount = assets.length;
+  const allBtn = `
+    <button class="mission-option ${activeMission === 'all' ? 'selected' : ''}" onclick="selectMissionFromScreen('all')">
+      <div class="mission-option-name">All Missions</div>
+      <div class="mission-option-line">${totalCount} assessment${totalCount !== 1 ? 's' : ''}</div>
+    </button>`;
+  const opts = missions.map((m, i) => {
+    const d = missionDisplay(m);
+    const badge = i === 0 ? '<div class="mission-option-badge">Most recent</div>' : '';
+    return `
+    <button class="mission-option ${activeMission === m.key ? 'selected' : ''}" onclick="selectMissionFromScreen('${escapeHtml(m.key)}')">
+      ${badge}
+      <div class="mission-option-name">${escapeHtml(d.name)}</div>
+      <div class="mission-option-line">${escapeHtml(d.lastEntry)}</div>
+      <div class="mission-option-line">${escapeHtml(d.count)}</div>
+    </button>`;
+  }).join('');
+  list.innerHTML = allBtn + opts;
+}
+function showMissionScreen() {
+  renderMissionScreenList();
+  document.getElementById('mission-screen').hidden = false;
+}
+function hideMissionScreen() {
+  document.getElementById('mission-screen').hidden = true;
+}
+// Keeps the compact header pill in sync with whatever's currently scoped.
+function updateMissionPillLabel() {
+  const el = document.getElementById('mission-pill-label');
+  if (!el) return;
+  if (activeMission === 'all') { el.textContent = 'All Missions'; return; }
+  const m = missions.find(mm => mm.key === activeMission);
+  el.textContent = m && m.missionNum ? `#${m.missionNum}` : 'Mission';
+}
+// Called both the first time (right after login, before the map/list have
+// ever been shown) and later when the user reopens the picker via the
+// header pill to switch missions.
+function selectMissionFromScreen(key) {
+  activeMission = key;
+  hideMissionScreen();
+  revealApp();
+  updateMissionPillLabel();
+  refreshMarkers();
+  renderList();
+  setTimeout(fitToScopedAssets, 60);
+  // Fire-and-forget: queue offline-cache warming for this mission's
+  // assessments. Never blocks the UI — see "OFFLINE MAP TILE CACHING" above.
+  scheduleTileWarm(scopedAssets());
+}
+function scopedAssets() {
+  if (activeMission === 'all') return assets;
+  return assets.filter(a => missionKeyOf(a) === activeMission);
+}
+// Shared with the offline tile-cache's "overview" zoom (see "OFFLINE MAP
+// TILE CACHING" below) so whatever gets proactively cached for the
+// big-picture view always matches what fitBounds() actually shows here —
+// bump this if the padding/zoom feel here ever changes.
+const FIT_ALL_MAX_ZOOM = 14;
+// Zooms/pans to fit every currently-scoped assessment on screen at once —
+// runs automatically right after a mission is picked. Briefly (2026-08-12)
+// also had an on-map "Fit all" button wired to this for calling it on
+// demand; removed the same day per feedback that it took up too much
+// space on the map — this function is still used for the automatic
+// mission-load fit, and FIT_ALL_MAX_ZOOM still feeds the offline tile
+// cache's "overview zoom" (see "OFFLINE MAP TILE CACHING" below), just
+// with no manual trigger anymore.
+function fitToScopedAssets() {
+  if (!map) return;
+  const list = scopedAssets();
+  if (!list.length) return;
+  const bounds = L.latLngBounds(list.map(a => [a.lat, a.lng]));
+  if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40], maxZoom: FIT_ALL_MAX_ZOOM });
+}
+// Shared by the live-fetch success path and the offline/cached fallback:
+// recompute the mission list + default selection, then re-render the
+// mission dropdown, list, and map markers from the (possibly new)
+// mission-scoped set.
+function applyMissionsAndRender(isStale, staleTs) {
+  computeMissions();
+  renderMissionScreenList();
+  updateMissionPillLabel();
+  renderedList = getFiltered();
+  document.getElementById('list-count').textContent = `${renderedList.length} assessment${renderedList.length !== 1 ? 's' : ''}`;
+  refreshMarkers();
+  renderList();
+  updateLastRefreshed(isStale, staleTs);
+}
+// ════════════════════════════════════════════════════════════════
+//  FILTER GRID — 5 damage levels + "All", plus a distance buffer row
+// ════════════════════════════════════════════════════════════════
+const BUFFER_OPTIONS = [
+  { miles: null, label: 'Any distance' },
+  { miles: 100,  label: '100 mi' },
+  { miles: 50,   label: '50 mi' },
+  { miles: 25,   label: '25 mi' },
+  { miles: 10,   label: '10 mi' },
+];
+function buildFilterGrid() {
+  const allBtn = `
+    <button class="fgt active" data-key="all" aria-pressed="true" onclick="setFilter(this,'all')">
+      <div class="fgt-icon" aria-hidden="true"><svg viewBox="0 0 26 26" width="26" height="26" aria-hidden="true"><circle cx="13" cy="13" r="12" fill="#002868"/><circle cx="13" cy="13" r="6" fill="#fff"/></svg></div>
+      <div class="fgt-label">All</div>
+    </button>`;
+  const others = Object.entries(DAMAGE_LEVELS).map(([key, lvl]) => `
+    <button class="fgt" data-key="${key}" aria-pressed="false" onclick="setFilter(this,'${key}')" aria-label="Filter: ${lvl.label}">
+      <div class="fgt-icon" aria-hidden="true">${iconHTML(key, 26)}</div>
+      <div class="fgt-label">${lvl.label}</div>
+    </button>`).join('');
+  const bufferBtns = BUFFER_OPTIONS.map(o => `
+    <button class="buft ${o.miles === null ? 'active' : ''}" data-miles="${o.miles === null ? '' : o.miles}"
+      aria-pressed="${o.miles === null ? 'true' : 'false'}" onclick="setBuffer(this, ${o.miles === null ? 'null' : o.miles})">${o.label}</button>`).join('');
+  // Boundary layer row — same one-at-a-time pill pattern as the distance
+  // row above and the same .buf-row layout, but its own .bndt class (see
+  // the CSS comment above .buft/.bndt for why they're not just one class)
+  // so setBuffer()'s global `.buft` reset can't touch these pills. "None"
+  // comes first so there's always an explicit way back to no boundary
+  // shown. Only one of the 4 layers can be on the map at a time, per user
+  // decision — picking a new one always replaces whatever was showing.
+  const boundaryNoneBtn = `
+    <button class="bndt active" data-boundary="" aria-pressed="true" onclick="setBoundaryLayer(this, null)">None</button>`;
+  const boundaryBtns = Object.entries(BOUNDARY_LAYERS).map(([key, cfg]) => `
+    <button class="bndt" data-boundary="${key}" aria-pressed="false" onclick="setBoundaryLayer(this, '${key}')">${cfg.shortLabel}</button>`).join('');
+  document.getElementById('filter-grid').innerHTML = `
+    <div class="fg-row" role="group" aria-label="Filter by damage level">${allBtn}${others}</div>
+    <div class="buf-label">Distance from me</div>
+    <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>
+    <div class="buf-label">Map boundaries</div>
+    <div class="buf-row" role="group" aria-label="Show a boundary layer on the map">${boundaryNoneBtn}${boundaryBtns}</div>`;
+}
+function toggleFilterDrawer(forceClose = false) {
+  const drawer = document.getElementById('filter-drawer');
+  const btn    = document.getElementById('filter-toggle-btn');
+  const isOpen = drawer.classList.contains('open');
+  if (forceClose || isOpen) {
+    drawer.classList.remove('open');
+    drawer.setAttribute('aria-hidden', 'true');
+    drawer.setAttribute('inert', '');
+    btn.setAttribute('aria-expanded', 'false');
+  } else {
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden', 'false');
+    drawer.removeAttribute('inert');
+    btn.setAttribute('aria-expanded', 'true');
+  }
+}
+function setFilter(el, key) {
+  document.querySelectorAll('.fgt').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+  el.classList.add('active'); el.setAttribute('aria-pressed', 'true');
+  activeFilter = key;
+  updateActiveFilterBar();
+  renderList();
+  // Drawer closes on selection, same as setBuffer() below (2026-08-12,
+  // reversing the "stays open" change made earlier the same day) — per
+  // follow-up feedback, picking either a damage level or a distance
+  // should close the drawer right away rather than needing an explicit
+  // Filter-button tap afterward.
+  toggleFilterDrawer(true);
+}
+function clearTypeFilter() {
+  const allBtn = document.querySelector('.fgt[data-key="all"]');
+  document.querySelectorAll('.fgt').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+  if (allBtn) { allBtn.classList.add('active'); allBtn.setAttribute('aria-pressed', 'true'); }
+  activeFilter = 'all';
+  updateActiveFilterBar();
+  renderList();
+}
+function setBuffer(el, miles) {
+  document.querySelectorAll('.buft').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+  el.classList.add('active'); el.setAttribute('aria-pressed', 'true');
+  activeBuffer = miles;
+  updateActiveFilterBar();
+  if (miles !== null && userLat === null) {
+    // Need a location fix before the buffer can do anything — kick off
+    // geolocation; onLocationSuccess() re-renders once it resolves.
+    requestLocation();
+  } else {
+    renderList();
+  }
+  // Closes on selection, matching setFilter() above (2026-08-12).
+  toggleFilterDrawer(true);
+}
+function clearBufferFilter() {
+  document.querySelectorAll('.buft').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+  const anyBtn = document.querySelector('.buft[data-miles=""]');
+  if (anyBtn) { anyBtn.classList.add('active'); anyBtn.setAttribute('aria-pressed', 'true'); }
+  activeBuffer = null;
+  updateActiveFilterBar();
+  renderList();
+}
+function updateActiveFilterBar() {
+  const bar = document.getElementById('active-filters');
+  const btn = document.getElementById('filter-toggle-btn');
+  const chips = [];
+  if (activeFilter !== 'all' && DAMAGE_LEVELS[activeFilter]) chips.push({ kind: 'level', label: DAMAGE_LEVELS[activeFilter].label });
+  if (activeBuffer !== null) chips.push({ kind: 'buffer', label: `Within ${activeBuffer} mi` });
+  // Boundary layer gets its own chip too — this doubles as the "which
+  // boundary is currently showing" indicator (no separate on-map badge),
+  // and its × is the same one-tap way to clear it as the other two chips.
+  if (activeBoundary && BOUNDARY_LAYERS[activeBoundary]) chips.push({ kind: 'boundary', label: BOUNDARY_LAYERS[activeBoundary].shortLabel });
+  bar.innerHTML = chips.map(c =>
+    `<button class="active-chip" type="button" data-clear="${c.kind}" aria-label="Remove filter: ${c.label}">${c.label}<span class="active-chip-x" aria-hidden="true">×</span></button>`
+  ).join('');
+  if (!bar._bound) {
+    bar._bound = true;
+    bar.addEventListener('click', (e) => {
+      const chip = e.target.closest('.active-chip[data-clear]');
+      if (!chip) return;
+      const kind = chip.getAttribute('data-clear');
+      if (kind === 'level') clearTypeFilter();
+      else if (kind === 'buffer') clearBufferFilter();
+      else if (kind === 'boundary') clearBoundaryFilter();
+    });
+  }
+  btn.classList.toggle('has-filter', chips.length > 0);
+}
+// ════════════════════════════════════════════════════════════════
+//  BOUNDARY LAYERS UI/DATA — TN House/Senate/Congressional districts
+//  and Census Tracts. See the BOUNDARY_LAYERS config block (near
+//  DAMAGE_LEVELS, above) for the per-layer field mapping/URLs.
+// ════════════════════════════════════════════════════════════════
+// Small debounce helper — used only to pace the census-tract layer's
+// viewport refetch on map moveend (the other 3 layers fetch once and
+// don't need this).
+function debounce(fn, wait) {
+  let t = null;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
+}
+function activeMissionLabel() {
+  if (activeMission === 'all') return 'All Missions';
+  const m = missions.find(mm => mm.key === activeMission);
+  return m && m.missionNum ? `Mission #${m.missionNum}` : 'this mission';
+}
+function setBoundaryHint(show, text, isError) {
+  const el = document.getElementById('boundary-hint');
+  if (!el) return;
+  el.hidden = !show;
+  el.classList.toggle('error', !!isError);
+  if (show) el.textContent = text;
+}
+// Removes whatever boundary layer is currently on the map (if any) and
+// tears down the tract-only moveend listener. Called both when switching
+// to a different boundary and when clearing back to "None".
+function clearBoundaryLayer() {
+  if (boundaryLayerGroup) { map.removeLayer(boundaryLayerGroup); boundaryLayerGroup = null; }
+  if (boundaryMoveHandler) { map.off('moveend', boundaryMoveHandler); boundaryMoveHandler = null; }
+  setBoundaryHint(false);
+}
+function clearBoundaryFilter() {
+  document.querySelectorAll('.bndt[data-boundary]').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+  const noneBtn = document.querySelector('.bndt[data-boundary=""]');
+  if (noneBtn) { noneBtn.classList.add('active'); noneBtn.setAttribute('aria-pressed', 'true'); }
+  activeBoundary = null;
+  clearBoundaryLayer();
+  updateActiveFilterBar();
+}
+// key is null for "None", otherwise one of BOUNDARY_LAYERS' keys.
+async function setBoundaryLayer(el, key) {
+  document.querySelectorAll('.bndt[data-boundary]').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+  el.classList.add('active'); el.setAttribute('aria-pressed', 'true');
+  activeBoundary = key;
+  clearBoundaryLayer();
+  updateActiveFilterBar();
+  // Closes on selection, matching setFilter()/setBuffer() above.
+  toggleFilterDrawer(true);
+  if (key) await showBoundaryLayer(key);
+}
+// Fetches (if needed) and renders the given boundary layer. Two modes:
+//  - 'full' (House/Senate/Congress): the whole layer is small (9–99
+//    features) so it's fetched once and cached in boundaryFullCache for
+//    the rest of the session — switching back to a layer already viewed
+//    this session is instant.
+//  - 'viewport' (Census Tracts): TN alone has 1,700+ tracts, and the
+//    layer's own minScale already hides it when zoomed out, so instead
+//    of ever loading the whole state this re-queries just the current
+//    map bounds, re-running (debounced) on every pan/zoom while this
+//    layer stays active, and shows the boundary-hint badge instead of
+//    fetching anything below minZoom.
+async function showBoundaryLayer(key) {
+  const cfg = BOUNDARY_LAYERS[key];
+  if (!cfg) return;
+  const myFetch = ++boundaryFetchToken;
+  const stillWanted = () => myFetch === boundaryFetchToken && activeBoundary === key;
+  if (cfg.mode === 'viewport') {
+    if (!boundaryMoveHandler) {
+      boundaryMoveHandler = debounce(() => { if (activeBoundary === key) showBoundaryLayer(key); }, 600);
+      map.on('moveend', boundaryMoveHandler);
+    }
+    if (map.getZoom() < cfg.minZoom) {
+      if (boundaryLayerGroup) { map.removeLayer(boundaryLayerGroup); boundaryLayerGroup = null; }
+      setBoundaryHint(true, `Zoom in to load ${cfg.label.toLowerCase()}`);
+      return;
+    }
+    setBoundaryHint(false);
+    try {
+      const fc = await fetchBoundaryViewportGeoJson(cfg);
+      if (!stillWanted()) return;
+      renderBoundaryFeatureCollection(fc, cfg);
+    } catch (err) {
+      console.warn('[Boundaries] tract fetch failed:', err);
+      if (stillWanted()) setBoundaryHint(true, `Could not load ${cfg.label} — check your connection`, true);
+    }
+  } else {
+    try {
+      let fc = boundaryFullCache[key];
+      if (!fc) {
+        fc = await fetchBoundaryFullGeoJson(cfg);
+        if (!stillWanted()) return;
+        boundaryFullCache[key] = fc;
+      }
+      if (!stillWanted()) return;
+      renderBoundaryFeatureCollection(fc, cfg);
+    } catch (err) {
+      console.warn('[Boundaries] layer fetch failed:', err);
+      if (stillWanted()) setBoundaryHint(true, `Could not load ${cfg.label} — check your connection`, true);
+    }
+  }
+}
+async function fetchBoundaryFullGeoJson(cfg) {
+  if (cfg.tokenRequired) await ensureFreshToken();
+  const params = new URLSearchParams({ where: '1=1', outFields: '*', outSR: '4326', f: 'geojson' });
+  if (cfg.tokenRequired) params.set('token', TOKEN.accessToken);
+  return arcgisFetch(`${cfg.url}/query?${params}`);
+}
+async function fetchBoundaryViewportGeoJson(cfg) {
+  if (cfg.tokenRequired) await ensureFreshToken();
+  const b = map.getBounds();
+  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(',');
+  const params = new URLSearchParams({
+    where:        cfg.stateFilter || '1=1',
+    geometry:     bbox,
+    geometryType: 'esriGeometryEnvelope',
+    inSR:         '4326',
+    spatialRel:   'esriSpatialRelIntersects',
+    outFields:    '*',
+    outSR:        '4326',
+    f:            'geojson',
+  });
+  if (cfg.tokenRequired) params.set('token', TOKEN.accessToken);
+  return arcgisFetch(`${cfg.url}/query?${params}`);
+}
+function renderBoundaryFeatureCollection(fc, cfg) {
+  if (boundaryLayerGroup) { map.removeLayer(boundaryLayerGroup); boundaryLayerGroup = null; }
+  const baseStyle = { color: cfg.color, weight: 2, opacity: 0.85, fillColor: cfg.color, fillOpacity: 0.05 };
+  boundaryLayerGroup = L.geoJSON(fc, {
+    style: () => ({ ...baseStyle }),
+    onEachFeature: (feature, layer) => {
+      // Popup content is a function so it's recomputed fresh every time
+      // it's opened — the damage counts depend on scopedAssets(), which
+      // can change under an already-rendered boundary layer (mission
+      // switch, the 5-min auto-refresh) without the layer itself reloading.
+      layer.bindPopup(() => buildBoundaryPopupHtml(feature, cfg), {
+        maxWidth: 280,
+        autoPan: true,
+        autoPanPaddingTopLeft:     [130, 60],
+        autoPanPaddingBottomRight: [70, 70],
+      });
+      layer.on('mouseover', () => layer.setStyle({ weight: 3, fillOpacity: 0.14 }));
+      layer.on('mouseout',  () => layer.setStyle(baseStyle));
+    },
+  }).addTo(map);
+}
+// ── Point-in-polygon spatial join ───────────────────────────────────
+// Deliberately not using a full computational-geometry library (turf,
+// etc.) for this — the app is a single self-contained file and this is
+// the one thing it needs from one, so a small standard ray-casting
+// implementation is enough. Handles Polygon and MultiPolygon, including
+// holes (a ring beyond the first subtracts from the outer ring rather
+// than adding to it — e.g. a lake excluded from a district).
+function rayCastRing(lat, lng, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersects = ((yi > lat) !== (yj > lat)) &&
+      (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+function pointInPolygonRings(lat, lng, rings) {
+  if (!rings || !rings.length) return false;
+  if (!rayCastRing(lat, lng, rings[0])) return false; // outside the outer ring entirely
+  for (let i = 1; i < rings.length; i++) {
+    if (rayCastRing(lat, lng, rings[i])) return false; // inside a hole — excluded
+  }
+  return true;
+}
+function pointInGeoJsonGeometry(lat, lng, geometry) {
+  if (!geometry) return false;
+  if (geometry.type === 'Polygon') return pointInPolygonRings(lat, lng, geometry.coordinates);
+  if (geometry.type === 'MultiPolygon') return geometry.coordinates.some(poly => pointInPolygonRings(lat, lng, poly));
+  return false;
+}
+// Joins the clicked boundary feature against scopedAssets() (i.e. the
+// *current mission's* assessments, matching how the rest of the app is
+// scoped — see scopedAssets() above) and tallies damage-level + dwelling
+// type counts. A cheap bounding-box pre-filter (via a throwaway
+// L.geoJSON's getBounds(), which correctly handles Polygon/MultiPolygon
+// without duplicating that logic here) skips the expensive per-vertex
+// ray-cast for assessments nowhere near this feature.
+function computeBoundaryCounts(feature) {
+  const bounds = L.geoJSON(feature).getBounds();
+  const candidates = scopedAssets().filter(a => bounds.contains([a.lat, a.lng]));
+  const matches = candidates.filter(a => pointInGeoJsonGeometry(a.lat, a.lng, feature.geometry));
+  const levels = {};
+  let unclassified = 0;
+  const dwellingCounts = {};
+  matches.forEach(a => {
+    if (a.level && DAMAGE_LEVELS[a.level]) levels[a.level] = (levels[a.level] || 0) + 1;
+    else unclassified++;
+    const d = (a.dwellingType || '').trim() || 'Unknown';
+    dwellingCounts[d] = (dwellingCounts[d] || 0) + 1;
+  });
+  return { total: matches.length, levels, unclassified, dwellingCounts };
+}
+// Builds the boundary popup's header line(s) from whatever fields the
+// layer actually has — House/Senate have LongName ("District 1"),
+// Congress doesn't, so it falls back to "District {DISTRICT}" built
+// from the raw DISTRICT value instead (see the BOUNDARY_LAYERS config
+// comment above for why that field isn't assumed present).
+function boundaryHeaderHtml(feature, cfg) {
+  const props = feature.properties || {};
+  if (cfg.unitLabel === 'tract') {
+    const tract = props.TRACT_FIPS, fips = props.FIPS;
+    const title = tract ? `Census Tract ${escapeHtml(tract)}` : 'Census Tract';
+    const sub = fips ? `GEOID ${escapeHtml(fips)}` : '';
+    return { title, sub };
+  }
+  const districtNum = props[cfg.idField];
+  const longName = cfg.longNameField ? props[cfg.longNameField] : null;
+  const title = longName
+    ? `${escapeHtml(cfg.shortLabel)} ${escapeHtml(String(longName))}`
+    : `${escapeHtml(cfg.shortLabel)} District ${escapeHtml(String(districtNum ?? ''))}`;
+  const sub = cfg.nameField ? (props[cfg.nameField] || '') : '';
+  return { title, sub };
+}
+function buildBoundaryPopupHtml(feature, cfg) {
+  const props = feature.properties || {};
+  const { title, sub } = boundaryHeaderHtml(feature, cfg);
+  const counts = computeBoundaryCounts(feature);
+  const popField = cfg.popField && props[cfg.popField];
+  const popLine = (popField !== null && popField !== undefined && popField !== '')
+    ? `<div class="pop-cityzip">Census population: ${Number(popField).toLocaleString()}</div>` : '';
+  const levelRows = Object.entries(DAMAGE_LEVELS).map(([key, lvl]) => `
+    <div class="bnd-level-row">
+      <span class="bnd-level-dot" style="background:${lvl.bg}"></span>
+      <span class="bnd-level-label" style="color:${lvl.text}">${lvl.label}</span>
+      <span class="bnd-level-count">${counts.levels[key] || 0}</span>
+    </div>`).join('') + (counts.unclassified ? `
+    <div class="bnd-level-row">
+      <span class="bnd-level-dot" style="background:#9aa1ab"></span>
+      <span class="bnd-level-label">Unclassified</span>
+      <span class="bnd-level-count">${counts.unclassified}</span>
+    </div>` : '');
+  // Dwelling-type breakdown, most-common first, capped so a very mixed
+  // district doesn't produce an endless popup.
+  const DWELLING_CAP = 6;
+  const dwellingEntries = Object.entries(counts.dwellingCounts).sort((a, b) => b[1] - a[1]);
+  const dwellingShown = dwellingEntries.slice(0, DWELLING_CAP);
+  const dwellingExtra = dwellingEntries.length - dwellingShown.length;
+  const dwellingRows = dwellingShown.map(([name, n]) => `
+    <div class="bnd-dwelling-row">
+      <span class="bnd-dwelling-label">${escapeHtml(name)}</span>
+      <span class="bnd-dwelling-count">${n}</span>
+    </div>`).join('') + (dwellingExtra > 0 ? `
+    <div class="bnd-dwelling-row"><span class="bnd-dwelling-label">+${dwellingExtra} more type${dwellingExtra !== 1 ? 's' : ''}</span></div>` : '');
+  return `<div class="pop bnd-pop">
+      <div class="pop-type" style="color:${cfg.color}">${title}</div>
+      ${sub ? `<div class="pop-name">${escapeHtml(sub)}</div>` : ''}
+      ${popLine}
+      <div class="bnd-total">${counts.total} assessment${counts.total !== 1 ? 's' : ''} in this ${cfg.unitLabel} — ${escapeHtml(activeMissionLabel())}</div>
+      ${counts.total > 0 ? `
+        <div class="bnd-level-list">${levelRows}</div>
+        <div class="bnd-sub-label">By dwelling type</div>
+        <div class="bnd-dwelling-list">${dwellingRows}</div>
+      ` : `<div class="bnd-empty">No assessments recorded here yet.</div>`}
+    </div>`;
+}
+function onSearch() { searchTerm = document.getElementById('search-input').value.toLowerCase(); renderList(); }
+function getFiltered() {
+  let list = scopedAssets().filter(a => {
+    if (activeFilter !== 'all' && a.level !== activeFilter) return false;
+    if (activeBuffer !== null && (a.distance === null || a.distance > activeBuffer)) return false;
+    if (searchTerm) {
+      const h = `${a.address} ${a.suiteApt} ${a.city} ${a.county} ${a.region} ${a.dwellingType} ${a.incidentType} ${a.zip}`.toLowerCase();
+      if (!h.includes(searchTerm)) return false;
+    }
+    return true;
+  });
+  // Always nearest-first once we have a location fix — the A–Z alternative
+  // (and the header toggle to switch to it) was removed per feedback that
+  // it wasn't needed. Alphabetical is kept only as a fallback for the
+  // window before any location fix exists yet (fresh load, permission not
+  // yet granted, etc.) so the list isn't left in raw fetch order.
+  if (userLat !== null) list.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+  else list.sort((a, b) => a.address.localeCompare(b.address));
+  return list;
+}
+// ════════════════════════════════════════════════════════════════
+//  LIST RENDERING
+// ════════════════════════════════════════════════════════════════
+function renderList() {
+  renderedList = getFiltered();
+  document.getElementById('list-count').textContent = `${renderedList.length} assessment${renderedList.length !== 1 ? 's' : ''}`;
+  const c = document.getElementById('asset-list');
+  if (!renderedList.length) {
+    const isFiltering = activeFilter !== 'all' || activeBuffer !== null || searchTerm;
+    if (assets.length === 0 || !isFiltering) {
+      c.innerHTML = '<div class="empty-state" role="status"><div class="icon" aria-hidden="true">🏚️</div><p>No assessments to display.</p></div>';
+    } else {
+      c.innerHTML = '<div class="empty-state" role="status"><div class="icon" aria-hidden="true">🔍</div><p>No assessments match your search.<br>Try a different filter or search term.</p></div>';
+    }
+    return;
+  }
+  c.innerHTML = renderedList.map(renderCard).join('');
+}
+function renderCard(a) {
+  const lvl = a.level ? DAMAGE_LEVELS[a.level] : null;
+  const color = lvl ? lvl.bg : '#666';
+  const textColor = lvl ? lvl.text : '#666'; // readable-on-white variant for label text
+  const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
+  const iconImg = iconHTML(a.level, 38);
+  const title = a.suiteApt ? `${a.address} ${a.suiteApt}` : a.address;
+  // Distance moved from the title row into the meta-badge row so the
+  // address has the full card width (truncates with ellipsis only when
+  // genuinely too long, not because a 4.8-mi pill is squatting in the
+  // title's space).
+  const dist  = a.distance !== null ? `<span class="dist-pill">📍 ${a.distance.toFixed(1)} mi</span>` : '';
+  const cityStateZip = [a.city, a.state].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : '');
+  const countyLine   = a.county ? `${a.county} County` : '';
+  const badges = [
+    dist,
+    a.dwellingType ? `<span class="meta-badge sector">${escapeHtml(a.dwellingType)}</span>` : '',
+  ].filter(Boolean).join('');
+  const sidAttr = String(a.id).replace(/"/g, '&quot;');
+  return `<article class="asset-card ${String(selectedId) === String(a.id) ? 'selected' : ''}" id="card-${a.id}"
+    data-asset-id="${sidAttr}" role="listitem" tabindex="0"
+    aria-label="${escapeHtml(title)}, ${escapeHtml(label)} damage, ${escapeHtml(a.city)}${a.distance !== null ? ' — ' + a.distance.toFixed(1) + ' miles away' : ''}">
+    <div class="card-body">
+      <div class="card-strip" style="background:${color}"></div>
+      <div class="card-content">
+        <div class="card-top">
+          <div class="type-icon">${iconImg}</div>
+          <div class="card-titles">
+            <div class="card-type-label" style="color:${textColor}">${escapeHtml(label)}</div>
+            <div class="card-title-divider"></div>
+            <div class="card-addr-block">
+              <div class="card-name">${escapeHtml(title)}</div>
+              ${cityStateZip ? `<div class="card-cityzip">${escapeHtml(cityStateZip)}</div>` : ''}
+              ${countyLine ? `<div class="card-cityzip card-county">${escapeHtml(countyLine)}</div>` : ''}
+            </div>
+          </div>
+        </div>
+        ${badges ? `<div class="meta-badges">${badges}</div>` : ''}
+      </div>
+    </div>
+    <div class="card-footer">
+      <button class="card-action primary" data-action="details" data-asset-id="${sidAttr}" aria-label="View details for ${escapeHtml(title)}">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        Details
+      </button>
+    </div>
+  </article>`;
+}
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+// ── Delegated card handlers (one listener, survives re-renders) ─
+function bindListHandlers() {
+  const list = document.getElementById('asset-list');
+  if (!list || list._bound) return;
+  list._bound = true;
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest('.card-action[data-asset-id]');
+    if (btn) {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-asset-id');
+      openDetail(id);
+      return;
+    }
+    const card = e.target.closest('.asset-card[data-asset-id]');
+    if (card) selectAsset(card.getAttribute('data-asset-id'));
+  });
+  list.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('.asset-card[data-asset-id]');
+    if (!card || e.target !== card) return;
+    e.preventDefault();
+    selectAsset(card.getAttribute('data-asset-id'));
+  });
+}
+// ════════════════════════════════════════════════════════════════
+//  MAP
+// ════════════════════════════════════════════════════════════════
+// Cluster group — holds every assessment marker and groups nearby ones
+// into numbered bubbles when the map is zoomed out, so a large storm
+// event with thousands of surveyed structures doesn't render as a wall
+// of overlapping pins. Markers break apart automatically as the user
+// zooms in.
+let clusterGroup = null;
+// Two-basemap setup. Each option can be a stack of one or more tile
+// layers — Hybrid is the Esri imagery service plus two transparent
+// reference overlays (place labels + road network), which is the same
+// recipe as AGOL's "Imagery Hybrid" basemap. All sources are public
+// Esri services with no token required.
+const BASEMAPS = {
+  streets: {
+    label: 'Streets',
+    layers: [
+      {
+        // Reverted to CARTO Positron ("light_all") on 2026-08-12 — briefly
+        // tried Voyager (rastertiles/voyager) for more visible places/POIs,
+        // but Positron renders building footprints (subtle gray outlines at
+        // higher zoom) that Voyager doesn't show as clearly, and those
+        // footprints turned out to be more useful for this app than
+        // Voyager's extra labels/color. Same free CARTO CDN either way, no
+        // API key.
+        url:         'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+        attribution: '© OpenStreetMap © CARTO',
+        maxZoom:     19,
+      },
+    ],
+  },
+  hybrid: {
+    label: 'Hybrid',
+    layers: [
+      {
+        // Satellite imagery base
+        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attribution: 'Imagery © Esri — Maxar, Earthstar Geographics, GIS User Community',
+        maxZoom:     19,
+      },
+      {
+        // Transparent place names and boundaries
+        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        attribution: '',
+        maxZoom:     19,
+      },
+      {
+        // Transparent road network (highway names, street labels)
+        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+        attribution: '',
+        maxZoom:     19,
+      },
+    ],
+  },
+};
+let currentBasemap = 'hybrid'; // aerial imagery is the field team's preferred default
+let basemapLayers  = [];   // tracks every tile layer the current basemap added
+function applyBasemap(key) {
+  if (!BASEMAPS[key]) return;
+  // Tear down whatever's currently on the map
+  basemapLayers.forEach(l => map.removeLayer(l));
+  basemapLayers = [];
+  const bm = BASEMAPS[key];
+  // Add layers in array order; later layers stack visually above earlier
+  // ones within Leaflet's tilePane (which itself sits below markerPane,
+  // so cluster + marker overlays remain on top automatically).
+  bm.layers.forEach((spec, i) => {
+    const layer = L.tileLayer(spec.url, {
+      maxZoom:     spec.maxZoom,
+      attribution: spec.attribution || '',
+    }).addTo(map);
+    basemapLayers.push(layer);
+    // Wire offline detection to the base imagery layer only (index 0). The
+    // label/road reference overlays legitimately 404 over water and sparse
+    // rural areas even when fully online, so counting their errors would
+    // false-trigger "offline" in perfectly normal use.
+    if (i === 0) {
+      layer.on('tileerror', onBasemapTileError);
+      layer.on('tileload', onBasemapTileLoad);
+    }
+  });
+  currentBasemap = key;
+  // Update the toggle button label to show what the *next* tap will do
+  const btn = document.getElementById('basemap-toggle');
+  if (btn) {
+    const next = key === 'streets' ? BASEMAPS.hybrid.label : BASEMAPS.streets.label;
+    const lbl = btn.querySelector('.basemap-label');
+    if (lbl) lbl.textContent = next;
+    btn.setAttribute('aria-label', `Switch to ${next} basemap`);
+  }
+}
+function toggleBasemap() {
+  applyBasemap(currentBasemap === 'streets' ? 'hybrid' : 'streets');
+}
+
+// ── Degraded / offline map-tile state ───────────────────────────
+// Distinguishes "only cached tiles are available right now" from normal
+// operation and actually shows it, instead of leaving unfetchable tiles
+// blank: a badge over the map, a light desaturation on the tile layer so
+// a cached view visibly reads as "not live," and a temporary cap on how
+// far the map will zoom. That cap matters because TILE_WARM_ZOOM is the
+// deepest zoom guaranteed to be proactively cached (see scheduleTileWarm
+// below — a compact mission's whole extent gets cached this deep, and even
+// the large-mission fallback path always covers at least this zoom) —
+// letting someone zoom in further while offline just trades a fully blank
+// screen for a partially blank one, one tile at a time. Both the badge and
+// the cap lift automatically the moment a tile loads successfully again.
+const FULL_TILE_MAX_ZOOM = 19; // matches every BASEMAPS layer's maxZoom
+let mapTilesOffline = false;
+let tileErrorStreak = 0;
+const TILE_ERROR_STREAK_THRESHOLD = 3; // one or two blocked requests can be transient; a streak is a real signal
+function onBasemapTileError() {
+  tileErrorStreak++;
+  if (tileErrorStreak >= TILE_ERROR_STREAK_THRESHOLD) setMapOfflineState(true);
+}
+function onBasemapTileLoad() {
+  tileErrorStreak = 0;
+  setMapOfflineState(false);
+}
+function setMapOfflineState(offline) {
+  if (offline === mapTilesOffline) return;
+  mapTilesOffline = offline;
+  const container = document.getElementById('map-container');
+  if (container) container.classList.toggle('map-degraded', offline);
+  const badge = document.getElementById('map-offline-badge');
+  if (badge) badge.hidden = !offline;
+  if (offline) {
+    if (map.getZoom() > TILE_WARM_ZOOM) map.setZoom(TILE_WARM_ZOOM);
+    map.setMaxZoom(TILE_WARM_ZOOM);
+  } else {
+    map.setMaxZoom(FULL_TILE_MAX_ZOOM);
+  }
+}
+// Browser connectivity events fire immediately on airplane-mode toggle —
+// faster than waiting for a tile request to actually time out — so use
+// them as a fast path, with the tile-error streak above as a fallback for
+// the "reports online but nothing actually loads" case (e.g. a wifi
+// network with no real internet behind it).
+window.addEventListener('offline', () => setMapOfflineState(true));
+window.addEventListener('online', () => {
+  tileErrorStreak = 0;
+  setMapOfflineState(false);
+  // A location that fell back to "last known" while offline is worth
+  // re-checking now that we might actually have a fresh fix again.
+  if (userLocationStale) requestLocation();
+});
+
+// ════════════════════════════════════════════════════════════════
+//  OFFLINE MAP TILE CACHING
+// ════════════════════════════════════════════════════════════════
+//  Scoped design, see app-notes: two tiers, both backed by the SAME
+//  service-worker cache (sw.js) so there's one code path, not two.
+//
+//  Tier 1 — "cache what's been seen": sw.js transparently caches every
+//  Hybrid-basemap (aerial imagery + reference overlays) tile the app
+//  actually loads while online, and serves it back if that exact tile is
+//  requested again while offline. That's automatic just from panning/
+//  zooming; nothing below is needed for it.
+//
+//  Tier 2 — proactive fallback, reworked 2026-08-12 from "a small radius
+//  around each individual assessment" to "the WHOLE current mission's
+//  extent, at two zooms": the default per-assessment zoom (TILE_WARM_ZOOM)
+//  and the "fit all assessments" overview zoom (FIT_ALL_MAX_ZOOM-capped,
+//  see fitToScopedAssets() — runs automatically on mission load; the
+//  on-map button that once called it on demand was removed for taking up
+//  too much space, see app-notes). Caching the actual bounding box instead
+//  of separate circles per site also closes
+//  the gaps a user would previously hit while panning BETWEEN two nearby
+//  assessments, which the old per-point design left uncached. Both zooms
+//  get fetched via scheduleTileWarm()/runTileWarm() below, one Hybrid
+//  layer-fetch per tile per zoom, landing in the exact same sw.js-managed
+//  cache as tier 1 — this code never touches the Cache API directly.
+//
+//  Safety valve: caching a mission's ENTIRE extent at the detail zoom only
+//  stays affordable for a geographically compact mission — tile count
+//  grows with the physical area covered, and TN PDA missions can in
+//  principle span a whole county or region after a large event (this is
+//  literally why the original whole-county design got replaced with a
+//  per-point one back on 2026-08-08). So: if the mission's extent at
+//  TILE_WARM_ZOOM would exceed TILE_WARM_EXTENT_TILE_CAP tiles, this falls
+//  back to the OLD per-point approach instead (a tight radius around just
+//  the TILE_WARM_MAX_ASSETS closest assessments, across TILE_WARM_ZOOM_RANGE
+//  for some cluster-reveal slack) rather than trying to cache the whole
+//  (possibly enormous) area. The overview zoom is always cached in full
+//  regardless — being more zoomed out, it stays cheap no matter how
+//  physically large the mission is.
+//
+//  Runs incrementally, not just once per mission: scheduleTileWarm() is
+//  called (a) right after a mission is picked, and (b) at the end of every
+//  successful fetchAssets() — including the 5-min auto-refresh — for
+//  whatever assets are currently in scope. Both are cheap even when
+//  nothing's new, since tile-level dedup (warmedTileKeys) and, in the
+//  per-point fallback, asset-level dedup (warmedAssetKeys) skip anything
+//  already warmed — so a new assessment logged by another field user while
+//  this device still has service gets its own area covered automatically,
+//  without anyone needing to reselect the mission or do anything else.
+//
+//  Kept deliberately gentle in the background so this never makes the app
+//  feel slow or locked up right after loading, while there's still
+//  service: each warm batch is fire-and-forget (never awaited by anything
+//  that blocks rendering), waits TILE_WARM_START_DELAY_MS before starting
+//  so foreground map/list/asset-data traffic gets a head start on the
+//  connection, runs at a modest concurrency (TILE_WARM_CONCURRENCY), and
+//  multiple calls queue behind each other (tileWarmQueue) instead of all
+//  firing at once and competing for bandwidth.
+//
+//  Hybrid (aerial) is the only basemap that gets cached, per the field
+//  team's preference for aerial imagery — Streets (CARTO) tiles are not
+//  cached at all. See app-notes.md "Map tile caching" for the full history.
+
+function lonLatToTileXY(lon, lat, z) {
+  const latRad = lat * Math.PI / 180;
+  const n = Math.pow(2, z);
+  const x = Math.floor((lon + 180) / 360 * n);
+  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+  return { x, y };
+}
+// Tiles covering a square bounding box of side ~2*radiusMiles centered on
+// (lat, lng) — a simple bounding box, not a precise circle, since this only
+// needs to pick "which tiles to prefetch," not render an exact boundary.
+// Longitude-degrees-per-mile shrinks with latitude (meridians converge
+// toward the poles), so the longitude delta is corrected by cos(latitude);
+// the latitude delta doesn't need that correction. Used only by the
+// per-point FALLBACK path now — see TILE_WARM_EXTENT_TILE_CAP above.
+function tilesForPointRadius(lat, lng, radiusMiles, z) {
+  const dLat = radiusMiles / 69.0; // ~69 miles per degree of latitude, roughly constant
+  const cos = Math.cos(lat * Math.PI / 180);
+  const dLng = radiusMiles / (69.0 * (cos || 1));
+  const nw = lonLatToTileXY(lng - dLng, lat + dLat, z);
+  const se = lonLatToTileXY(lng + dLng, lat - dLat, z);
+  const minX = Math.min(nw.x, se.x), maxX = Math.max(nw.x, se.x);
+  const minY = Math.min(nw.y, se.y), maxY = Math.max(nw.y, se.y);
+  const tiles = [];
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) tiles.push({ x, y, z });
+  }
+  return tiles;
+}
+// Tiles covering an L.LatLngBounds rectangle at a given zoom — the
+// whole-extent counterpart to tilesForPointRadius above.
+function tilesForBounds(bounds, z) {
+  const nw = lonLatToTileXY(bounds.getWest(), bounds.getNorth(), z);
+  const se = lonLatToTileXY(bounds.getEast(), bounds.getSouth(), z);
+  const minX = Math.min(nw.x, se.x), maxX = Math.max(nw.x, se.x);
+  const minY = Math.min(nw.y, se.y), maxY = Math.max(nw.y, se.y);
+  const tiles = [];
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) tiles.push({ x, y, z });
+  }
+  return tiles;
+}
+// Cheap tile-COUNT estimate for a bounds+zoom without building the actual
+// list — used to decide, before doing any real work, whether caching the
+// mission's whole extent at TILE_WARM_ZOOM is affordable (see
+// TILE_WARM_EXTENT_TILE_CAP) without ever materializing a huge array.
+function tileCountEstimate(bounds, z) {
+  const nw = lonLatToTileXY(bounds.getWest(), bounds.getNorth(), z);
+  const se = lonLatToTileXY(bounds.getEast(), bounds.getSouth(), z);
+  return (Math.abs(se.x - nw.x) + 1) * (Math.abs(se.y - nw.y) + 1);
+}
+// The zoom fitBounds()/fitToScopedAssets() would actually land the map at
+// for a given extent, capped the same way that function caps (see
+// FIT_ALL_MAX_ZOOM) — kept in lockstep so whatever gets proactively cached
+// for the "big picture" view always matches what the Fit All button
+// actually shows, rather than drifting out of sync with a separate guess.
+function overviewZoomFor(bounds) {
+  if (!map || !bounds.isValid()) return FIT_ALL_MAX_ZOOM;
+  const raw = map.getBoundsZoom(bounds, false, [40, 40]);
+  return Math.max(3, Math.min(raw, FIT_ALL_MAX_ZOOM));
+}
+
+const TILE_WARM_ZOOM = 16; // default per-assessment zoom — see selectAsset() and setMapOfflineState()
+// Tile-count ceiling for caching a mission's WHOLE extent at TILE_WARM_ZOOM
+// (2026-08-12) — see the safety-valve note above. 600 tiles is roughly a
+// mission whose assessments span up to ~7-8 miles across (varies with
+// latitude and the extent's shape) — comfortably a single town/local damage
+// survey, which is the common case this is meant to optimize for. Wider
+// than that and this falls back to the old per-point approach instead of
+// trying to cache the whole area.
+const TILE_WARM_EXTENT_TILE_CAP = 600;
+// Fallback-path-only constants below (used when a mission's extent exceeds
+// the cap above): a tight radius around just the closest few assessments,
+// across a small zoom range for cluster-reveal slack — the exact design
+// this app used before whole-extent caching existed. See app-notes.md.
+const POINT_CACHE_RADIUS_MILES = 0.5;
+const TILE_WARM_ZOOM_RANGE = [15, 16, 17];
+const TILE_WARM_MAX_ASSETS = 50;
+const TILE_WARM_CONCURRENCY = 4;
+const TILE_WARM_START_DELAY_MS = 4000; // let foreground map/list/asset traffic get a head start on the connection first
+let tileWarmQueue = Promise.resolve(); // serializes warm batches so overlapping calls don't compete for bandwidth
+const warmedAssetKeys = new Set();     // OBJECTIDs already queued for warming this session (fallback path only)
+const warmedTileKeys = new Set();      // "z/x/y" tiles already fetched this session (both paths)
+// Fills in an Esri tile URL template's {z}/{y}/{x} placeholders for one tile.
+function fillArcgisTileUrl(template, t) {
+  return template.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x);
+}
+// Small status line shown near "Updated HH:MM" in the list header so there's
+// SOME visible signal for whether it's actually safe to go offline yet —
+// added after a report of going into airplane mode right after loading the
+// map and getting a blank basemap, because the warm was still silently in
+// progress (or hadn't even started) with nothing telling the user that.
+function setTileCacheStatus(text, autoHideMs) {
+  const el = document.getElementById('tile-cache-status');
+  if (!el) return;
+  clearTimeout(setTileCacheStatus._t);
+  if (!text) { el.hidden = true; return; }
+  el.textContent = text;
+  el.hidden = false;
+  if (autoHideMs) setTileCacheStatus._t = setTimeout(() => { el.hidden = true; }, autoHideMs);
+}
+// Resolves once a service worker is actually active and controlling this
+// page, or `false` if that doesn't happen within `timeoutMs` (e.g.
+// registration failed, or the browser is still installing it). Warming the
+// cache before a worker is actively controlling the page would just waste
+// battery/data on fetches that never get intercepted/cached.
+function waitForServiceWorkerReady(timeoutMs) {
+  if (!('serviceWorker' in navigator)) return Promise.resolve(false);
+  return Promise.race([
+    navigator.serviceWorker.ready.then(() => true),
+    new Promise(resolve => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
+// Entry point: call with any list of assets (a freshly-picked mission's
+// assets, or the current mission scope after any fetchAssets(), including
+// the auto-refresh timer) whenever there's a chance to cache their
+// surroundings. Safe to call repeatedly — the real work (bounds/zoom math,
+// deciding whole-extent vs. fallback, the actual fetches) happens inside
+// runTileWarm(), queued rather than run immediately, and every path dedups
+// against what's already been warmed, so a call that finds nothing new to
+// do is cheap.
+function scheduleTileWarm(assetList) {
+  if (!('serviceWorker' in navigator) || !map) return;
+  const candidates = (assetList || []).filter(a => a && Number.isFinite(a.lat) && Number.isFinite(a.lng));
+  if (!candidates.length) return;
+  const bounds = L.latLngBounds(candidates.map(a => [a.lat, a.lng]));
+  if (!bounds.isValid()) return;
+  tileWarmQueue = tileWarmQueue.then(() => runTileWarm(candidates, bounds)).catch(() => {});
+}
+async function runTileWarm(assetList, bounds) {
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
+  // Give foreground work (initial map tiles, the asset list fetch, any
+  // attachment thumbnails) a head start on the connection before this
+  // background batch starts competing for bandwidth.
+  await new Promise(resolve => setTimeout(resolve, TILE_WARM_START_DELAY_MS));
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return; // could've gone offline during the delay
+
+  const tileSet = new Map();
+  const addTiles = (list) => list.forEach(t => {
+    const key = `${t.z}/${t.x}/${t.y}`;
+    if (!warmedTileKeys.has(key)) tileSet.set(key, t);
+  });
+
+  // Overview zoom: always the WHOLE mission extent. Cheap regardless of how
+  // physically large the mission is — the more zoomed out, the fewer/
+  // bigger tiles cover the same ground — and it's what makes the "Fit all"
+  // big-picture view work offline too, not just the per-assessment one.
+  addTiles(tilesForBounds(bounds, overviewZoomFor(bounds)));
+
+  if (tileCountEstimate(bounds, TILE_WARM_ZOOM) <= TILE_WARM_EXTENT_TILE_CAP) {
+    // Compact mission — cache its ENTIRE extent at the default
+    // per-assessment zoom too. This also closes the gaps between
+    // individual assessments that the old point-radius-only design left
+    // blank when panning between nearby sites.
+    addTiles(tilesForBounds(bounds, TILE_WARM_ZOOM));
+  } else {
+    // Mission spans too much ground to affordably cache the whole extent
+    // at this depth — fall back to a tight radius around just the closest
+    // TILE_WARM_MAX_ASSETS assessments, across TILE_WARM_ZOOM_RANGE for
+    // some cluster-reveal slack (the design this app used before
+    // whole-extent caching existed).
+    const prioritized = userLat !== null
+      ? [...assetList].sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
+      : assetList;
+    const fresh = prioritized.slice(0, TILE_WARM_MAX_ASSETS).filter(a => {
+      const key = a.objectId ?? a.id;
+      return key !== undefined && key !== null && !warmedAssetKeys.has(key);
+    });
+    fresh.forEach(a => {
+      warmedAssetKeys.add(a.objectId ?? a.id);
+      TILE_WARM_ZOOM_RANGE.forEach(z => addTiles(tilesForPointRadius(a.lat, a.lng, POINT_CACHE_RADIUS_MILES, z)));
+    });
+  }
+
+  const tiles = Array.from(tileSet.values());
+  if (!tiles.length) return;
+  const ready = await waitForServiceWorkerReady(8000);
+  if (!ready) {
+    console.warn('Service worker not active after 8s — skipping offline map prefetch for these assessments.');
+    return;
+  }
+  setTileCacheStatus(`Caching offline map for ${assetList.length} assessment${assetList.length === 1 ? '' : 's'}…`);
+  // Hybrid is 3 stacked Esri layers (imagery + boundary labels + road
+  // labels) — all 3 have to be cached per tile for the area to render
+  // correctly offline, so expand each map tile into 3 fetch targets.
+  const layerUrls = BASEMAPS.hybrid.layers.map(l => l.url);
+  const urls = [];
+  tiles.forEach(t => layerUrls.forEach(tpl => urls.push(fillArcgisTileUrl(tpl, t))));
+  let i = 0;
+  async function worker() {
+    while (i < urls.length) {
+      const url = urls[i++];
+      try { await fetch(url, { mode: 'no-cors' }); } catch (e) { /* offline mid-warm, or a blocked tile — skip it */ }
+    }
+  }
+  await Promise.all(Array.from({ length: TILE_WARM_CONCURRENCY }, worker));
+  tiles.forEach(t => warmedTileKeys.add(`${t.z}/${t.x}/${t.y}`));
+  setTileCacheStatus('Offline map ready', 5000);
+}
+
+// Registered immediately (not gated on window 'load') — the map starts
+// fetching tiles as soon as initMap() runs, right after DOMContentLoaded,
+// which can happen well before 'load' fires (that waits for every image
+// etc. to finish). Registering as early as possible gives the service
+// worker the best chance to activate and start controlling the page
+// before those very first tiles are requested, so they have a chance to
+// land in the offline cache too, not just tiles from later panning.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(err => {
+    console.warn('Service worker registration failed — offline tile caching disabled:', err);
+  });
+}
+
+function initMap() {
+  map = L.map('map', { zoomControl: false, attributionControl: false }).setView([35.85, -86.4], 7);
+  applyBasemap(currentBasemap);
+  L.control.zoom({ position: 'topright' }).addTo(map);
+  L.control.attribution({ position: 'bottomleft', prefix: '' }).addTo(map);
+  // Custom cluster icons styled to match TEMA blue branding. Three size
+  // tiers based on cluster size so a 5-assessment cluster doesn't look
+  // the same as a 200-assessment cluster.
+  clusterGroup = L.markerClusterGroup({
+    showCoverageOnHover:     false,    // don't draw the polygon — looks busy
+    spiderfyOnMaxZoom:       true,     // splay overlapping pins at max zoom
+    disableClusteringAtZoom: 14,       // stop clustering once the user is in close
+    maxClusterRadius:        55,
+    chunkedLoading:          true,     // smoother first-render with thousands of pins
+    iconCreateFunction(cluster) {
+      const n = cluster.getChildCount();
+      let size;
+      if      (n >= 100) size = 56;
+      else if (n >= 25)  size = 48;
+      else if (n >= 10)  size = 42;
+      else               size = 36;
+      const fontSz = n >= 100 ? 14 : 13;
+      return L.divIcon({
+        className: 'cikr-cluster',
+        html: `<div style="width:${size}px;height:${size}px;background:rgba(0,40,104,0.92);border:3px solid #fff;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:${fontSz}px;font-family:'DM Sans',sans-serif;box-shadow:0 3px 10px rgba(0,0,0,0.35)">${n}</div>`,
+        iconSize: [size, size],
+      });
+    },
+  });
+  map.addLayer(clusterGroup);
+}
+// Popup thumbnails are raw HTML injected by Leaflet (not real DOM nodes we
+// keep a reference to), so we can't attach per-tile listeners when they're
+// built. Delegate from a single document-level listener instead, keyed off
+// the popup's data-oid and each tile's data-idx.
+document.addEventListener('click', (e) => {
+  const thumb = e.target.closest('.pop-attach-thumb');
+  if (!thumb) return;
+  const popEl = thumb.closest('.pop[data-oid]');
+  if (!popEl) return;
+  e.stopPropagation();
+  const objectId = popEl.getAttribute('data-oid');
+  const entry = attachmentCache.get(objectId) || attachmentCache.get(Number(objectId));
+  if (!entry || entry.status !== 'done' || entry.result.state !== 'ok') return;
+  const infos = entry.result.infos;
+  const idx = Number(thumb.getAttribute('data-idx'));
+  if (idx >= infos.length) {
+    // The "+N" tile — jump to the full detail sheet's attachment grid
+    // rather than trying to cram every thumbnail into a tiny popup.
+    const asset = assets.find(as => String(as.objectId) === String(objectId));
+    if (asset) openDetail(asset.id);
+    return;
+  }
+  const att = infos[idx];
+  if (att.isImage) openLightbox(att.url, att.name);
+  else window.open(att.url, '_blank', 'noopener');
+});
+function buildPopupHtml(a) {
+  const lvl = a.level ? DAMAGE_LEVELS[a.level] : null;
+  const color = lvl ? lvl.bg : '#666';
+  const textColor = lvl ? lvl.text : '#666'; // readable-on-white variant for label text
+  const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
+  const title = a.suiteApt ? `${a.address} ${a.suiteApt}` : a.address;
+  const popCityZip = [a.city, a.state].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : '');
+  // No icon here — the popup already sits right next to the marker's own
+  // house-in-circle icon on the map, so repeating it inside the popup was
+  // redundant.
+  return `<div class="pop" data-oid="${a.objectId}">
+      <div class="pop-type" style="color:${textColor}">${escapeHtml(label)}</div>
+      <div class="pop-name">${escapeHtml(title)}</div>
+      ${popCityZip ? `<div class="pop-cityzip">${escapeHtml(popCityZip)}</div>` : ''}
+      ${a.dwellingType ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHtml(a.dwellingType)}</div>` : ''}
+      ${renderPopupAttachments(a.objectId)}
+    </div>`;
+}
+// Renders the small thumbnail strip shown inside a marker popup. Shows a
+// "Loading…" placeholder until the shared attachment cache has resolved,
+// then up to 4 thumbnails with a "+N" tile if there are more. Errors and
+// "no attachments" both render nothing — the popup is a quick preview, not
+// the place to surface a fetch-error message (the detail sheet does that).
+function renderPopupAttachments(objectId) {
+  const entry = attachmentCache.get(objectId);
+  if (!entry || entry.status !== 'done') return `<div class="pop-attach-loading">Loading photos…</div>`;
+  const result = entry.result;
+  if (result.state === 'error' || !result.infos.length) return '';
+  const MAX = 4;
+  const shown = result.infos.slice(0, MAX);
+  const extra = result.infos.length - shown.length;
+  // Loading shimmer + broken-image fallback (2026-08-12) — these are the
+  // exact same full-resolution attachment files as the detail sheet's grid,
+  // just shown small via CSS (ArcGIS's feature-attachment endpoint has no
+  // separate resized/thumbnail variant to request instead), so a slow or
+  // flaky field connection can leave one stuck loading or failing outright.
+  // The detail sheet already handled that with a shimmer + fallback icon;
+  // these popup tiles previously had neither, so a failed load just sat
+  // there as a permanently broken image with no feedback.
+  const tiles = shown.map((att, i) => att.isImage
+    ? `<div class="pop-attach-thumb loading" data-idx="${i}"><img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name)}" loading="lazy" onload="this.parentElement.classList.remove('loading')" onerror="this.parentElement.classList.remove('loading');this.parentElement.classList.add('pop-attach-broken');this.parentElement.textContent='⚠️'"></div>`
+    : `<div class="pop-attach-thumb pop-attach-file" data-idx="${i}" title="${escapeHtml(att.name)}">📄</div>`
+  ).join('');
+  const more = extra > 0 ? `<div class="pop-attach-thumb pop-attach-more" data-idx="${MAX}">+${extra}</div>` : '';
+  return `<div class="pop-attach">${tiles}${more}</div>`;
+}
+// Fetches (via the shared cache) and re-renders a popup's attachment strip
+// once data arrives. Bound to each marker's `popupopen` event rather than
+// fetched eagerly for every marker up front — with a large dataset that
+// would mean hundreds of attachment queries before the user asks for any.
+async function loadPopupAttachments(a, marker) {
+  const cached = attachmentCache.get(a.objectId);
+  if (cached && cached.status === 'done') {
+    // Data's already in the shared cache, but the *currently displayed*
+    // popup HTML doesn't necessarily reflect it yet — that happens whenever
+    // the fetch finished while this exact popup was closed (or finished
+    // after the initial bind but before this reopen), since Leaflet only
+    // shows whatever HTML was last set via bindPopup()/setPopupContent(),
+    // not a fresh render on every open. Previously this returned early on
+    // the (wrong) assumption the popup was already up to date, which left
+    // it stuck showing "Loading photos…" forever on every subsequent open
+    // even though the photos had actually loaded — re-rendering here is
+    // cheap, so just always bring the popup in line with the cache.
+    marker.setPopupContent(buildPopupHtml(a));
+    return;
+  }
+  await getAttachmentInfoCached(a.objectId);
+  if (!marker.isPopupOpen()) return; // user moved on — don't fight the current popup
+  marker.setPopupContent(buildPopupHtml(a));
+}
+function refreshMarkers() {
+  if (!clusterGroup) return;
+  clusterGroup.clearLayers();
+  markers = {};
+  const layers = [];
+  scopedAssets().forEach(a => {
+    const mk = L.marker([a.lat, a.lng], { icon: makeIcon(a) })
+      .bindPopup(buildPopupHtml(a), {
+        closeButton: false,
+        offset: [0, -4],
+        maxWidth: 260,
+        // Auto-pan the map so popups never end up behind the on-map UI:
+        // the basemap toggle pill (top-left) or the locate FAB
+        // (bottom-right). Padding values are roughly the size of those
+        // controls plus a comfortable margin.
+        autoPan:                   true,
+        autoPanPaddingTopLeft:     [130, 60],
+        autoPanPaddingBottomRight: [70, 70],
+      })
+      .on('click', () => selectAsset(a.id))
+      .on('popupopen', () => loadPopupAttachments(a, mk));
+    markers[String(a.id)] = mk;
+    layers.push(mk);
+  });
+  // addLayers (plural) is much faster than addLayer in a loop for thousands
+  // of markers — uses chunked indexing under the hood.
+  clusterGroup.addLayers(layers);
+}
+function makeIcon(a, sel = false) {
+  const lvl = a.level ? DAMAGE_LEVELS[a.level] : null;
+  const color = lvl ? lvl.bg : '#666';
+  const sz = sel ? 40 : 30;
+  // The house icon already carries its own colored circle, so the marker
+  // is just the image. Selection state adds a colored ring (damage-level
+  // color) and a larger drop-shadow so the active assessment still pops
+  // on a busy map.
+  const ring = sel
+    ? `box-shadow:0 0 0 3px ${color}, 0 3px 12px rgba(0,0,0,0.35)`
+    : `box-shadow:0 2px 6px rgba(0,0,0,0.3)`;
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;${ring};overflow:hidden;background:#fff">${iconHTML(a.level, sz)}</div>`,
+    iconSize:   [sz, sz],
+    iconAnchor: [sz / 2, sz / 2],
+  });
+}
+function selectAsset(id) {
+  const a = getAsset(id); if (!a) return;
+  if (selectedId && markers[String(selectedId)]) {
+    const o = getAsset(selectedId);
+    if (o) markers[String(selectedId)].setIcon(makeIcon(o, false));
+  }
+  selectedId = a.id;
+  const mk = markers[String(a.id)];
+  if (mk) {
+    mk.setIcon(makeIcon(a, true));
+    // If this marker is currently inside a cluster, zoom in until it's
+    // visible, then open the popup. zoomToShowLayer is the cluster
+    // plugin's helper for exactly this case — without it, openPopup()
+    // on a clustered marker is a no-op.
+    if (clusterGroup && clusterGroup.hasLayer(mk)) {
+      // zoomToShowLayer picks whatever zoom is actually needed to separate
+      // this marker out of its cluster, which can be deeper than
+      // TILE_WARM_ZOOM if points are packed tightly together — there's no
+      // way to force a shallower zoom here without leaving the marker
+      // clustered, so this one case can still land somewhere the offline
+      // cache doesn't cover.
+      clusterGroup.zoomToShowLayer(mk, () => mk.openPopup());
+    } else {
+      mk.openPopup();
+      // Zoom to TILE_WARM_ZOOM (the default), or STAY at the current zoom
+      // if the user had already zoomed in past it — only zoom IN to reach
+      // the default, never back OUT of a closer view they set on purpose
+      // (2026-08-12, per feedback: "if someone zooms in closer, adopt that
+      // zoom, but if zoomed out beyond the default zoom back to that
+      // default"). This briefly used a flat TILE_WARM_ZOOM for every
+      // selection instead (see git history / app-notes), specifically so
+      // it always lined up with what the offline cache had warmed — now
+      // that the cache covers the mission's whole extent at this zoom (see
+      // "OFFLINE MAP TILE CACHING" below), not just a small circle per
+      // site, adopting a deeper zoom the user chose no longer risks
+      // landing somewhere unwarmed nearly as often as it used to.
+      map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), TILE_WARM_ZOOM), { duration: 0.9 });
+    }
+  } else {
+    map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), TILE_WARM_ZOOM), { duration: 0.9 });
+  }
+  document.querySelectorAll('.asset-card').forEach(c => c.classList.remove('selected'));
+  const card = document.getElementById('card-' + a.id);
+  if (card) { card.classList.add('selected'); card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+}
+// ════════════════════════════════════════════════════════════════
+//  GEOLOCATION
+// ════════════════════════════════════════════════════════════════
+function requestLocation() {
+  if (!navigator.geolocation) { useLastKnownLocation(); return; }
+  document.getElementById('loc-label').textContent = '…';
+  navigator.geolocation.getCurrentPosition(onLocationSuccess, () => {
+    // No fresh fix — airplane mode, GPS still resolving indoors, or the
+    // user declined the permission prompt. Rather than dropping location/
+    // distance entirely, fall back to wherever we last had a fix (see
+    // useLastKnownLocation()). Only alert if we truly have nothing at all.
+    if (!useLastKnownLocation()) {
+      document.getElementById('loc-label').textContent = 'Locate';
+      // A distance filter can't do anything without a fix — drop back to
+      // "Any distance" rather than silently showing zero results.
+      if (activeBuffer !== null) clearBufferFilter();
+      alert('Could not get your location. Please enable location access.');
+    }
+  }, { timeout: 10000, enableHighAccuracy: true });
+}
+function recenterOnUser() {
+  if (userLat === null || userLng === null) { requestLocation(); return; }
+  map.flyTo([userLat, userLng], Math.max(map.getZoom(), 12), { duration: 0.8 });
+}
+function onLocationSuccess(pos) {
+  userLat = pos.coords.latitude; userLng = pos.coords.longitude;
+  userLocationStale = false;
+  cacheLocation(userLat, userLng);
+  document.getElementById('loc-label').textContent = 'Located ✓';
+  // Distance/list update FIRST and unconditionally — this is the part that
+  // actually matters everywhere (list sort/filter, popups, detail sheet).
+  // The user-location marker + fly-to below is map polish; it used to run
+  // first, so if it ever threw (e.g. Leaflet doing something unexpected
+  // with a map whose container was still settling right as the mission
+  // picker was dismissed) the function aborted right there and these two
+  // lines never ran — leaving the "Located ✓" label showing with no
+  // distance values until the user tapped Locate again and got a run that
+  // didn't hit the same issue. Wrapping the marker/flyTo in its own
+  // try/catch below means that can't happen anymore even if that map code
+  // does throw for some environment-specific reason.
+  assets = assets.map(a => ({ ...a, distance: haversine(userLat, userLng, a.lat, a.lng) }));
+  renderList();
+  try {
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.marker([userLat, userLng], {
+      icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+      zIndexOffset: 1000,
+    }).addTo(map);
+    map.flyTo([userLat, userLng], 10, { duration: 1 });
+  } catch (err) {
+    console.warn('Could not place/fly to the user-location marker (list distances were still updated):', err);
+  }
+}
+// Falls back to the last GPS fix we successfully cached (see cacheLocation
+// in onLocationSuccess) when a fresh one isn't available right now. Marked
+// visually as stale (amber dot, "Last known" pill label) so it's clear this
+// isn't a live position — the field user could easily have moved since.
+// Returns false (and touches nothing) if there's no cached fix to fall
+// back to at all, so the caller can still show its own "no location"
+// message in that case.
+function useLastKnownLocation() {
+  const cached = loadCachedLocation();
+  if (!cached) return false;
+  userLat = cached.lat; userLng = cached.lng;
+  userLocationStale = true;
+  document.getElementById('loc-label').textContent = 'Last known';
+  // Same ordering fix as onLocationSuccess: update distances/list first and
+  // unconditionally, then isolate the marker placement in its own
+  // try/catch so it can't take the list update down with it if it throws.
+  assets = assets.map(a => ({ ...a, distance: haversine(userLat, userLng, a.lat, a.lng) }));
+  renderList();
+  try {
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.marker([userLat, userLng], {
+      icon: L.divIcon({ className: '', html: '<div class="user-dot user-dot-stale"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+      zIndexOffset: 1000,
+    }).addTo(map);
+  } catch (err) {
+    console.warn('Could not place the last-known-location marker (list distances were still updated):', err);
+  }
+  return true;
+}
+function haversine(la1, lo1, la2, lo2) {
+  const R = 3958.8, dL = r(la2 - la1), dO = r(lo2 - lo1);
+  const A = Math.sin(dL / 2) ** 2 + Math.cos(r(la1)) * Math.cos(r(la2)) * Math.sin(dO / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(A), Math.sqrt(1 - A));
+}
+function r(d) { return d * Math.PI / 180; }
+// ════════════════════════════════════════════════════════════════
+//  DETAIL SHEET
+//  --------------------------------------------------------------
+//  Mirrors the sections/order/field-by-field content of the Arcade
+//  popup expression configured on the ArcGIS Online web map, so the
+//  mobile detail view and the desktop popup show the same information
+//  in the same order: Assessment Info, Location, Damage Assessment,
+//  Additional Info, Parcel Info, Flood Info. Any field that's blank
+//  (empty string, null, or the literal text "null") is omitted, and
+//  an entire section is skipped if none of its fields have values —
+//  same behavior as the Arcade's IsBlank/Row/Section helpers.
+// ════════════════════════════════════════════════════════════════
+function isBlank(val) {
+  if (val === null || val === undefined) return true;
+  const t = String(val).trim();
+  return t === '' || t.toLowerCase() === 'null';
+}
+function fmtDateTime(val) {
+  if (isBlank(val)) return '';
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return String(val);
+  return d.toLocaleString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+function fmtDateOnly(val) {
+  if (isBlank(val)) return '';
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return String(val);
+  return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+}
+function fmtCurrency(val) {
+  if (isBlank(val)) return '';
+  const n = Number(val);
+  if (Number.isNaN(n)) return String(val);
+  return '$' + Math.round(n).toLocaleString('en-US');
+}
+function kvRow(label, val) {
+  if (isBlank(val)) return '';
+  return `<div class="kv-key">${escapeHtml(label)}</div><div class="kv-val">${escapeHtml(val)}</div>`;
+}
+function kvSection(title, rowsHtml) {
+  if (!rowsHtml) return '';
+  return `<div class="sdiv"></div><div class="sec"><div class="sec-label">${escapeHtml(title)}</div><div class="kv-grid">${rowsHtml}</div></div>`;
+}
+let _lastFocusBeforeDetail = null;
+async function openDetail(id) {
+  const a = getAsset(id); if (!a) return;
+  _lastFocusBeforeDetail = document.activeElement;
+  selectAsset(id);
+  const lvl = a.level ? DAMAGE_LEVELS[a.level] : null;
+  const color = lvl ? lvl.bg : '#666';
+  const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
+  const bannerIcon = iconHTML(a.level, 42);
+  const fullAddr = `${a.address}, ${a.city}, ${a.state} ${a.zip}`.trim().replace(/,\s*$/, '');
+  const addrEnc  = encodeURIComponent(fullAddr || `${a.lat},${a.lng}`);
+  const distLine = a.distance !== null ? `<div class="sheet-dist">📍 ${a.distance.toFixed(1)} mi away</div>` : '';
+
+  const assessmentRows = [
+    kvRow('Training / Mission', a.trainMission),
+    kvRow('Mission Number', a.missionNum),
+    kvRow('Date & Time of Assessment', fmtDateTime(a.assessmentDatetime)),
+    kvRow('Input By', a.subName),
+    kvRow('TEMA Region', a.region),
+  ].join('');
+  const locationRows = [
+    kvRow('Street Address', a.address),
+    kvRow('Suite/Apt/Unit', a.suiteApt),
+    kvRow('City/Town', a.city),
+    kvRow('State', a.state),
+    kvRow('Zip Code', a.zip),
+    kvRow('County', a.county),
+  ].join('');
+  const damageRows = [
+    kvRow('Type of Dwelling', a.dwellingType),
+    kvRow('Event Type', a.incidentType),
+    kvRow('Off Foundation?', a.foundationOff),
+    kvRow('Damage Description (Destroyed)', a.detailsFoundation),
+  ].join('');
+  const additionalRows = [
+    kvRow('Owner or Renter', a.ownerRenter),
+    kvRow('Insurance on Structure', a.insurance),
+    kvRow('Notes', a.notes),
+  ].join('');
+  const parcelRows = [
+    kvRow('Parcel ID', a.parcelId),
+    kvRow('Parcel Address', a.parcelAddress),
+    kvRow('Parcel Appraisal', fmtCurrency(a.parcelAppraisal)),
+    kvRow('Appraisal Date', fmtDateOnly(a.parcelDate)),
+  ].join('');
+  const floodRows = [
+    kvRow('FEMA Flood Zone', a.floodZone),
+    kvRow('Flood Zone Subtype', a.floodZoneSubtype),
+    kvRow('DFIRM ID', a.dfirmId),
+  ].join('');
+
+  const sectionsHtml = [
+    kvSection('Assessment Info', assessmentRows),
+    kvSection('Location', locationRows),
+    kvSection('Damage Assessment', damageRows),
+    kvSection('Additional Info', additionalRows),
+    kvSection('Parcel Info', parcelRows),
+    kvSection('Flood Info', floodRows),
+  ].join('');
+
+  document.getElementById('detail-body').innerHTML = `
+    <div class="sheet-banner" style="background:${color}18;border:1px solid ${color}40;color:${color};">
+      ${bannerIcon}
+      <div class="banner-label">${escapeHtml(label)}</div>
+    </div>
+    <div class="sheet-header">
+      <h2 class="sheet-name" id="detail-asset-name">${escapeHtml(a.address || 'Unknown address')}${a.suiteApt ? ' ' + escapeHtml(a.suiteApt) : ''}</h2>
+      <div class="sheet-addr">${escapeHtml(a.city || '')}${a.city && a.state ? ', ' : ''}${escapeHtml(a.state || '')} ${escapeHtml(String(a.zip || ''))}</div>
+      ${a.county ? `<div class="sheet-addr sheet-county">${escapeHtml(a.county)} County</div>` : ''}
+      ${distLine}
+    </div>
+    ${sectionsHtml}
+    <div class="sdiv"></div>
+    <div class="sec" id="attachments-sec">
+      <div class="sec-label">Attachments</div>
+      <div id="attachments-body" style="font-size:13px;color:var(--text3)">Loading…</div>
+    </div>
+    <div class="sdiv"></div>
+    <div class="nav-btns">
+      <a class="nav-btn goo" href="https://maps.google.com/?q=${addrEnc}" target="_blank" rel="noopener" aria-label="Open in Google Maps">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>Google Maps
+      </a>
+      <a class="nav-btn apl" href="https://maps.apple.com/?q=${addrEnc}" target="_blank" rel="noopener" aria-label="Open in Apple Maps">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>Apple Maps
+      </a>
+    </div>`;
+  const sheet = document.getElementById('detail-sheet');
+  sheet.removeAttribute('hidden');
+  sheet.classList.add('open');
+  setTimeout(() => { const btn = sheet.querySelector('.sheet-close-btn'); if (btn) btn.focus(); }, 50);
+  sheet._keyHandler = e => {
+    if (e.key === 'Escape') { closeDetail(); return; }
+    if (e.key !== 'Tab') return;
+    const focusables = sheet.querySelectorAll('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (!focusables.length) return;
+    const first = focusables[0], last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  document.addEventListener('keydown', sheet._keyHandler);
+  // Lazy-load attachments — only fetched when the detail is opened, not on
+  // the initial list query (saves bandwidth on big datasets).
+  loadAttachmentsInto(a);
+}
+async function loadAttachmentsInto(a) {
+  const box = document.getElementById('attachments-body');
+  const sec = document.getElementById('attachments-sec');
+  if (!box) return;
+  if (sec) sec.style.display = '';
+  console.info(`[Preds PDA] loading attachments for OBJECTID=${a.objectId} (${a.address})`);
+  // The detail sheet is the "give me the real answer" view — unlike the
+  // popup preview, retry a previously-failed fetch (e.g. token expired,
+  // now refreshed) instead of showing a stale cached error forever.
+  const cachedEntry = attachmentCache.get(a.objectId);
+  if (cachedEntry && cachedEntry.status === 'done' && cachedEntry.result.state === 'error') {
+    attachmentCache.delete(a.objectId);
+  }
+  const result = await getAttachmentInfoCached(a.objectId);
+  if (result.state === 'error') {
+    const debugLines = (result.debugLog || []).map(l => escapeHtml(l)).join('<br>');
+    box.innerHTML = `
+      <div style="color:#842029;font-size:13px;line-height:1.5">${escapeHtml(result.message)}</div>
+      <details style="margin-top:8px;font-size:11px;color:var(--text3)" open>
+        <summary style="cursor:pointer">Details (for reporting this)</summary>
+        <div style="margin-top:4px;line-height:1.5">OBJECTID: ${escapeHtml(String(a.objectId))}<br>${debugLines || 'No diagnostic info available.'}</div>
+      </details>`;
+    return;
+  }
+  const infos = result.infos;
+  if (!infos.length) {
+    // A small expandable diagnostic line — shows exactly what each lookup
+    // attempt returned for this OBJECTID, so if this is wrong (e.g. the
+    // record really does have attachments) it can be checked/reported
+    // without needing DevTools, even from a phone.
+    const debugLines = (result.debugLog || []).map(l => escapeHtml(l)).join('<br>');
+    box.innerHTML = `
+      <div style="color:var(--text3);font-size:13px">No attachments for this assessment.</div>
+      <details style="margin-top:8px;font-size:11px;color:var(--text3)">
+        <summary style="cursor:pointer">Not expecting this? Tap for details</summary>
+        <div style="margin-top:4px;line-height:1.5">OBJECTID: ${escapeHtml(String(a.objectId))}<br>${debugLines || 'No diagnostic info available.'}</div>
+      </details>`;
+    return;
+  }
+  box.innerHTML = `<div class="attachment-grid">${infos.map((att, i) => `
+    <div class="attachment-tile ${att.isImage ? 'loading' : ''}" data-idx="${i}" data-url="${escapeHtml(att.url)}" data-name="${escapeHtml(att.name)}" data-type="${escapeHtml(att.contentType)}" tabindex="0" role="button" aria-label="${escapeHtml(att.name)}">
+      ${att.isImage ? `<img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name)}" onload="this.parentElement.classList.remove('loading')" onerror="this.parentElement.innerHTML='<div class=\\'fileinfo\\'>📄<br><strong>'+this.alt+'</strong></div>';this.parentElement.classList.remove('loading')">` : `<div class="fileinfo">📄<br><strong>${escapeHtml(att.name)}</strong><br>${formatBytes(att.size)}</div>`}
+    </div>`).join('')}</div>`;
+  box.querySelectorAll('.attachment-tile').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const url = tile.getAttribute('data-url');
+      const type = tile.getAttribute('data-type');
+      if (type && type.startsWith('image/')) openLightbox(url, tile.getAttribute('data-name'));
+      else                                    window.open(url, '_blank', 'noopener');
+    });
+    tile.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tile.click(); }
+    });
+  });
+}
+function formatBytes(n) {
+  if (!n) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function closeDetail() {
+  const sheet = document.getElementById('detail-sheet');
+  sheet.classList.remove('open');
+  setTimeout(() => sheet.setAttribute('hidden', ''), 350);
+  document.removeEventListener('keydown', sheet._keyHandler);
+  if (_lastFocusBeforeDetail) _lastFocusBeforeDetail.focus();
+}
+// ── Lightbox ───────────────────────────────────────────────────
+function openLightbox(url, name) {
+  const lb = document.getElementById('lightbox');
+  const img = document.getElementById('lightbox-img');
+  img.src = url; img.alt = name || '';
+  lb.hidden = false;
+  document.addEventListener('keydown', _lightboxKey);
+}
+function closeLightbox() {
+  document.getElementById('lightbox').hidden = true;
+  document.getElementById('lightbox-img').src = '';
+  document.removeEventListener('keydown', _lightboxKey);
+}
+function _lightboxKey(e) { if (e.key === 'Escape') closeLightbox(); }
+// ════════════════════════════════════════════════════════════════
+//  STARTUP
+// ════════════════════════════════════════════════════════════════
+async function startApp() {
+  buildFilterGrid();
+  bindListHandlers();
+  initMap();
+  // Show the mission picker immediately (with a loading placeholder) so
+  // it's the first thing the user sees — the map/list stay hidden behind
+  // it until a mission is picked in revealApp()/selectMissionFromScreen().
+  showMissionScreen();
+  await fetchAssets();
+  // Discover layer capabilities (hasAttachments, etc.) — runs in parallel
+  // with everything else; the result is consulted when a detail is opened.
+  fetchLayerMeta();
+  if (navigator.geolocation) navigator.geolocation.getCurrentPosition(onLocationSuccess, () => useLastKnownLocation(), { timeout: 5000 });
+  else useLastKnownLocation();
+  if (CONFIG.refreshInterval > 0) {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(fetchAssets, CONFIG.refreshInterval);
+  }
+}
+document.addEventListener('DOMContentLoaded', async () => {
+  // Step 1 — if we just got back from the OAuth redirect, exchange the code
+  const consumed = await handleOAuthCallback();
+  if (consumed) {
+    hideLogin();
+    startApp();
+    return;
+  }
+  // Step 2 — otherwise, look for a cached token from a previous session
+  const stored = loadStoredToken();
+  if (stored && stored.accessToken) {
+    TOKEN = stored;
+    // If the access token is past expiry, try a silent refresh first
+    try {
+      if (Date.now() > stored.expiresAt - CONFIG.refreshBufferMs) {
+        await ensureFreshToken();
+      }
+      hideLogin();
+      startApp();
+    } catch (err) {
+      console.warn('Silent refresh on startup failed:', err);
+      clearStoredToken();
+      showLogin();
+    }
+  } else {
+    showLogin();
+  }
+});
+window.addEventListener('load', () => { setTimeout(() => { if (map) map.invalidateSize(); }, 300); });
+window.addEventListener('resize', () => { if (map) map.invalidateSize(); });
+</script>
+</body>
+</html>
