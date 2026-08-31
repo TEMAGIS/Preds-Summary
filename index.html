@@ -1578,7 +1578,11 @@ function showError(msg) {
 // ════════════════════════════════════════════════════════════════
 let map, userMarker, userLat = null, userLng = null, userLocationStale = false;
 let markers = {}, assets = [];
-let activeFilter = 'all', activeBuffer = null, searchTerm = '', selectedId = null;
+// activeLevels is a Set, not a single string — the damage-level filter is
+// multi-select (2026-08-31, per user request). Empty set == "All" (no
+// damage-level filtering). activeBuffer/activeBoundary stay single-select.
+let activeLevels = new Set();
+let activeBuffer = null, searchTerm = '', selectedId = null;
 // Boundary layers (House/Senate/Congress/Tracts) — see the BOUNDARY LAYERS
 // config block above and "BOUNDARY LAYERS UI/DATA" further down.
 let activeBoundary = null;        // null | 'house' | 'senate' | 'congress' | 'tract'
@@ -1787,7 +1791,7 @@ function buildFilterGrid() {
   const boundaryBtns = Object.entries(BOUNDARY_LAYERS).map(([key, cfg]) => `
     <button class="bndt" data-boundary="${key}" aria-pressed="false" onclick="setBoundaryLayer(this, '${key}')">${cfg.shortLabel}</button>`).join('');
   document.getElementById('filter-grid').innerHTML = `
-    <div class="fg-row" role="group" aria-label="Filter by damage level">${allBtn}${others}</div>
+    <div class="fg-row" role="group" aria-label="Filter by damage level, select one or more">${allBtn}${others}</div>
     <div class="buf-label">Distance from me</div>
     <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>
     <div class="buf-label">Map boundaries</div>
@@ -1809,24 +1813,50 @@ function toggleFilterDrawer(forceClose = false) {
     btn.setAttribute('aria-expanded', 'true');
   }
 }
+// Damage-level filter is multi-select (2026-08-31, per user request) —
+// unlike the distance/boundary rows below (still single-select, and still
+// closing the drawer on every tap), a multi-select row needs to stay open
+// across several taps, so picking/unpicking a level here deliberately does
+// NOT close the drawer. "All" is the one exception: it's a single
+// deliberate "clear everything, show all levels" action, so it still
+// closes the drawer, same as before this change.
 function setFilter(el, key) {
-  document.querySelectorAll('.fgt').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
-  el.classList.add('active'); el.setAttribute('aria-pressed', 'true');
-  activeFilter = key;
+  if (key === 'all') { clearTypeFilter(); return; }
+  if (activeLevels.has(key)) activeLevels.delete(key);
+  else activeLevels.add(key);
+  syncLevelButtons();
   updateActiveFilterBar();
   renderList();
-  // Drawer closes on selection, same as setBuffer() below (2026-08-12,
-  // reversing the "stays open" change made earlier the same day) — per
-  // follow-up feedback, picking either a damage level or a distance
-  // should close the drawer right away rather than needing an explicit
-  // Filter-button tap afterward.
-  toggleFilterDrawer(true);
+}
+// Re-derives every .fgt pill's active/aria-pressed state from activeLevels
+// (the source of truth) rather than toggling just the clicked element —
+// needed because a chip's × (removeLevelFilter) and the "All" pill can
+// each change activeLevels without a specific .fgt element having been
+// clicked. "All" lights up exactly when nothing specific is selected,
+// which also makes it re-light automatically when the last remaining
+// level gets toggled off, instead of leaving every pill unlit.
+function syncLevelButtons() {
+  const noneSelected = activeLevels.size === 0;
+  document.querySelectorAll('.fgt[data-key]').forEach(c => {
+    const key = c.getAttribute('data-key');
+    const on = key === 'all' ? noneSelected : activeLevels.has(key);
+    c.classList.toggle('active', on);
+    c.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
 }
 function clearTypeFilter() {
-  const allBtn = document.querySelector('.fgt[data-key="all"]');
-  document.querySelectorAll('.fgt').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
-  if (allBtn) { allBtn.classList.add('active'); allBtn.setAttribute('aria-pressed', 'true'); }
-  activeFilter = 'all';
+  activeLevels.clear();
+  syncLevelButtons();
+  updateActiveFilterBar();
+  renderList();
+  toggleFilterDrawer(true);
+}
+// Removes just one level from the multi-select (used by that level's chip
+// × in the active-filters bar) — distinct from clearTypeFilter(), which
+// clears all of them at once (used by the "All" pill).
+function removeLevelFilter(key) {
+  activeLevels.delete(key);
+  syncLevelButtons();
   updateActiveFilterBar();
   renderList();
 }
@@ -1857,14 +1887,19 @@ function updateActiveFilterBar() {
   const bar = document.getElementById('active-filters');
   const btn = document.getElementById('filter-toggle-btn');
   const chips = [];
-  if (activeFilter !== 'all' && DAMAGE_LEVELS[activeFilter]) chips.push({ kind: 'level', label: DAMAGE_LEVELS[activeFilter].label });
+  // One chip per selected damage level (multi-select) — each removable
+  // independently via its own ×, unlike the single all-or-nothing chips
+  // below for distance/boundary.
+  activeLevels.forEach(key => {
+    if (DAMAGE_LEVELS[key]) chips.push({ kind: 'level', key, label: DAMAGE_LEVELS[key].label });
+  });
   if (activeBuffer !== null) chips.push({ kind: 'buffer', label: `Within ${activeBuffer} mi` });
   // Boundary layer gets its own chip too — this doubles as the "which
   // boundary is currently showing" indicator (no separate on-map badge),
   // and its × is the same one-tap way to clear it as the other two chips.
   if (activeBoundary && BOUNDARY_LAYERS[activeBoundary]) chips.push({ kind: 'boundary', label: BOUNDARY_LAYERS[activeBoundary].shortLabel });
   bar.innerHTML = chips.map(c =>
-    `<button class="active-chip" type="button" data-clear="${c.kind}" aria-label="Remove filter: ${c.label}">${c.label}<span class="active-chip-x" aria-hidden="true">×</span></button>`
+    `<button class="active-chip" type="button" data-clear="${c.kind}"${c.key ? ` data-key="${c.key}"` : ''} aria-label="Remove filter: ${c.label}">${c.label}<span class="active-chip-x" aria-hidden="true">×</span></button>`
   ).join('');
   if (!bar._bound) {
     bar._bound = true;
@@ -1872,7 +1907,7 @@ function updateActiveFilterBar() {
       const chip = e.target.closest('.active-chip[data-clear]');
       if (!chip) return;
       const kind = chip.getAttribute('data-clear');
-      if (kind === 'level') clearTypeFilter();
+      if (kind === 'level') removeLevelFilter(chip.getAttribute('data-key'));
       else if (kind === 'buffer') clearBufferFilter();
       else if (kind === 'boundary') clearBoundaryFilter();
     });
@@ -2145,7 +2180,7 @@ function buildBoundaryPopupHtml(feature, cfg) {
 function onSearch() { searchTerm = document.getElementById('search-input').value.toLowerCase(); renderList(); }
 function getFiltered() {
   let list = scopedAssets().filter(a => {
-    if (activeFilter !== 'all' && a.level !== activeFilter) return false;
+    if (activeLevels.size > 0 && !activeLevels.has(a.level)) return false;
     if (activeBuffer !== null && (a.distance === null || a.distance > activeBuffer)) return false;
     if (searchTerm) {
       const h = `${a.address} ${a.suiteApt} ${a.city} ${a.county} ${a.region} ${a.dwellingType} ${a.incidentType} ${a.zip}`.toLowerCase();
@@ -2170,7 +2205,7 @@ function renderList() {
   document.getElementById('list-count').textContent = `${renderedList.length} assessment${renderedList.length !== 1 ? 's' : ''}`;
   const c = document.getElementById('asset-list');
   if (!renderedList.length) {
-    const isFiltering = activeFilter !== 'all' || activeBuffer !== null || searchTerm;
+    const isFiltering = activeLevels.size > 0 || activeBuffer !== null || searchTerm;
     if (assets.length === 0 || !isFiltering) {
       c.innerHTML = '<div class="empty-state" role="status"><div class="icon" aria-hidden="true">🏚️</div><p>No assessments to display.</p></div>';
     } else {
