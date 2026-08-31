@@ -585,9 +585,9 @@
   </div>
   <div id="map-container" role="region" aria-label="Map showing damage assessment locations">
     <div id="map"></div>
-    <button id="basemap-toggle" type="button" onclick="toggleBasemap()" aria-label="Switch to Streets basemap">
+    <button id="basemap-toggle" type="button" onclick="toggleBasemap()" aria-label="Switch to Hybrid basemap">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
-      <span class="basemap-label">Streets</span>
+      <span class="basemap-label">Hybrid</span>
     </button>
     <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
@@ -2140,6 +2140,120 @@ function renderBoundaryFeatureCollection(fc, cfg) {
     },
   }).addTo(map);
 }
+// ── Point-at-a-location lookup (detail sheet's Legislative/Census
+//    Summary sections) ──────────────────────────────────────────────
+// This is a *different* technique from the map-boundary-click flow
+// above, on purpose: clicking a district/tract on the map already has
+// every polygon for that one layer loaded client-side (it's what's being
+// rendered), so testing scopedAssets() against them locally is free. The
+// detail sheet is the opposite situation — there's exactly one point
+// (this one assessment) and *no* boundary layer necessarily loaded at
+// all (the user may never have opened the filter drawer's boundary
+// picker), so fetching whole layers just to test one point would be
+// wasteful. Each ArcGIS REST service can answer "which single feature
+// contains this point" itself via a point-geometry intersection query —
+// cheaper, simpler, and doesn't depend on any boundary layer having been
+// toggled on first.
+async function queryBoundaryAtPoint(cfg, lat, lng) {
+  if (cfg.tokenRequired) await ensureFreshToken();
+  const outFields = cfg.unitLabel === 'tract'
+    ? 'TRACT_FIPS,FIPS,COUNTY_FIPS,STATE_ABBR,POPULATION'
+    : [cfg.idField, cfg.nameField, cfg.longNameField, cfg.popField].filter(Boolean).join(',');
+  const params = new URLSearchParams({
+    geometry:          `${lng},${lat}`,
+    geometryType:      'esriGeometryPoint',
+    inSR:              '4326',
+    spatialRel:        'esriSpatialRelIntersects',
+    outFields,
+    returnGeometry:    'false',
+    resultRecordCount: '1',
+    f:                 'json',
+  });
+  if (cfg.tokenRequired) params.set('token', TOKEN.accessToken);
+  const data = await arcgisFetch(`${cfg.url}/query?${params}`);
+  const feat = (data.features || [])[0];
+  // {ok:false} means "queried fine, nothing contains this point" (e.g. an
+  // assessment right at the TN state line) — not an error, just nothing
+  // to show for that one layer.
+  return feat ? { ok: true, attrs: feat.attributes } : { ok: false };
+}
+// Runs all 4 lookups in parallel and tolerates any of them failing
+// independently (Promise.allSettled) — one flaky layer shouldn't blank
+// out the other three.
+async function fetchBoundaryPointInfo(a) {
+  const keys = ['house', 'senate', 'congress', 'tract'];
+  const settled = await Promise.allSettled(keys.map(k => queryBoundaryAtPoint(BOUNDARY_LAYERS[k], a.lat, a.lng)));
+  const out = {};
+  keys.forEach((k, i) => { out[k] = settled[i].status === 'fulfilled' ? settled[i].value : { ok: false, error: true }; });
+  return out;
+}
+// Shared cache keyed by OBJECTID, same pattern as attachmentCache above —
+// reopening the same assessment's detail sheet doesn't re-run all 4
+// queries every time.
+const boundaryPointCache = new Map();
+function getBoundaryPointInfoCached(a) {
+  const cached = boundaryPointCache.get(a.objectId);
+  if (cached) return cached;
+  const promise = fetchBoundaryPointInfo(a).catch(err => {
+    boundaryPointCache.delete(a.objectId); // don't cache a hard failure — allow retry on next open
+    throw err;
+  });
+  boundaryPointCache.set(a.objectId, promise);
+  return promise;
+}
+// Builds the Legislative Summary section's kv-grid rows from whichever of
+// house/senate/congress actually matched — same silent-omission
+// convention the rest of the detail sheet uses for blank fields (isBlank/
+// kvRow above), rather than an error line per layer that came back empty.
+function renderLegislativeRows(info) {
+  const rows = [];
+  const add = (key, label) => {
+    const entry = info[key];
+    if (!entry || !entry.ok) return;
+    const cfg = BOUNDARY_LAYERS[key];
+    const attrs = entry.attrs;
+    const longName = cfg.longNameField ? attrs[cfg.longNameField] : null;
+    const districtText = longName || `District ${attrs[cfg.idField] ?? ''}`;
+    rows.push(kvRow(label, districtText));
+    if (cfg.nameField) rows.push(kvRow('Represented by', attrs[cfg.nameField]));
+  };
+  add('house', 'TN House');
+  add('senate', 'TN Senate');
+  add('congress', 'US Congress');
+  return rows.length ? `<div class="kv-grid">${rows.join('')}</div>` : '';
+}
+function renderCensusRows(info) {
+  const entry = info.tract;
+  if (!entry || !entry.ok) return '';
+  const attrs = entry.attrs;
+  const pop = attrs.POPULATION;
+  const rows = [
+    kvRow('Census Tract', formatTractNumber(attrs.TRACT_FIPS)),
+    kvRow('GEOID', attrs.FIPS),
+    kvRow('Tract Population', (pop !== null && pop !== undefined && pop !== '') ? Number(pop).toLocaleString('en-US') : ''),
+  ].join('');
+  return `<div class="kv-grid">${rows}</div>`;
+}
+// Fills in the detail sheet's Legislative Summary / Census Summary
+// sections once the point lookup resolves — same lazy-load-after-open
+// pattern as loadAttachmentsInto() below.
+async function loadBoundarySummaryInto(a) {
+  const legBox = document.getElementById('legislative-body');
+  const censusBox = document.getElementById('census-body');
+  if (!legBox && !censusBox) return;
+  let info;
+  try {
+    info = await getBoundaryPointInfoCached(a);
+  } catch (err) {
+    console.warn('[Boundaries] point lookup failed:', err);
+    const msg = '<div style="color:var(--text3)">Could not look this up right now — check your connection.</div>';
+    if (legBox) legBox.innerHTML = msg;
+    if (censusBox) censusBox.innerHTML = msg;
+    return;
+  }
+  if (legBox) legBox.innerHTML = renderLegislativeRows(info) || '<div style="color:var(--text3)">No matching district found for this location.</div>';
+  if (censusBox) censusBox.innerHTML = renderCensusRows(info) || '<div style="color:var(--text3)">No matching census tract found for this location.</div>';
+}
 // ── Point-in-polygon spatial join ───────────────────────────────────
 // Deliberately not using a full computational-geometry library (turf,
 // etc.) for this — the app is a single self-contained file and this is
@@ -2385,24 +2499,33 @@ let clusterGroup = null;
 // recipe as AGOL's "Imagery Hybrid" basemap. All sources are public
 // Esri services with no token required.
 const BASEMAPS = {
+  // Key stays "streets" (not renamed to e.g. "gray") so none of the
+  // toggle logic below — which looks up BASEMAPS.streets/.hybrid by this
+  // exact key — needed to change for this swap.
   streets: {
-    label: 'Streets',
+    label: 'Light Gray',
     layers: [
       {
-        // Switched from CARTO Positron to Esri World Street Map
-        // (2026-08-31) — CARTO's free cartocdn.com basemap tiles started
-        // returning "API key required" in the field, so the Streets
-        // basemap was silently broken. Esri's World_Street_Map is the same
-        // free, no-key, server.arcgisonline.com host the Hybrid basemap
-        // already uses (see below) — one of the two no-key alternatives
-        // this app's notes had already flagged as ready to go if CARTO
-        // ever became unworkable (the other being Esri World Topographic
-        // Map, which adds terrain shading/contours — worth trying instead
-        // if this flatter street style doesn't have enough detail).
-        // Not part of the offline tile cache (see "Map tile caching" —
-        // only Hybrid is proactively cached), same as Positron before it.
-        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-        attribution: 'Esri, HERE, Garmin, FAO, NOAA, USGS, © OpenStreetMap contributors',
+        // Swapped from Esri World Street Map to Esri's "Light Gray
+        // Canvas" (2026-08-31), and made the default basemap (see
+        // currentBasemap below) — a deliberately muted, low-contrast base
+        // so it doesn't compete visually with the colored damage-level
+        // markers/popups and the 4 colored boundary-layer outlines/labels
+        // this app draws on top of it. Same free, no-key
+        // server.arcgisonline.com host as Hybrid and the previous Streets
+        // layer. Two stacked layers, same pattern as Hybrid below: a flat
+        // gray base plus a separate reference layer for labels/roads/
+        // boundaries drawn on top of it.
+        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+        attribution: 'Esri, HERE, Garmin, © OpenStreetMap contributors',
+        maxZoom:     19,
+      },
+      {
+        // Labels/roads/boundaries reference layer — the Light Gray base
+        // above is unlabeled on its own, same two-layer split Esri uses
+        // for this basemap everywhere else it's offered.
+        url:         'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+        attribution: '',
         maxZoom:     19,
       },
     ],
@@ -2431,7 +2554,9 @@ const BASEMAPS = {
     ],
   },
 };
-let currentBasemap = 'hybrid'; // aerial imagery is the field team's preferred default
+let currentBasemap = 'streets'; // Light Gray Canvas is now the default (2026-08-31, per user request) —
+// was 'hybrid' (aerial imagery, the field team's original preference). Hybrid is still
+// one tap away via the same toggle button, nothing else about it changed.
 let basemapLayers  = [];   // tracks every tile layer the current basemap added
 function applyBasemap(key) {
   if (!BASEMAPS[key]) return;
@@ -3220,6 +3345,16 @@ async function openDetail(id) {
     </div>
     ${sectionsHtml}
     <div class="sdiv"></div>
+    <div class="sec" id="legislative-sec">
+      <div class="sec-label">Legislative Summary</div>
+      <div id="legislative-body" style="font-size:13px;color:var(--text3)">Loading…</div>
+    </div>
+    <div class="sdiv"></div>
+    <div class="sec" id="census-sec">
+      <div class="sec-label">Census Summary</div>
+      <div id="census-body" style="font-size:13px;color:var(--text3)">Loading…</div>
+    </div>
+    <div class="sdiv"></div>
     <div class="sec" id="attachments-sec">
       <div class="sec-label">Attachments</div>
       <div id="attachments-body" style="font-size:13px;color:var(--text3)">Loading…</div>
@@ -3250,6 +3385,10 @@ async function openDetail(id) {
   // Lazy-load attachments — only fetched when the detail is opened, not on
   // the initial list query (saves bandwidth on big datasets).
   loadAttachmentsInto(a);
+  // Same idea for the legislative/census district lookup (2026-08-31) —
+  // only queried once someone actually opens a detail sheet, not for
+  // every assessment up front.
+  loadBoundarySummaryInto(a);
 }
 async function loadAttachmentsInto(a) {
   const box = document.getElementById('attachments-body');
