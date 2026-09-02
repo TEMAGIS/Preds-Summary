@@ -2634,56 +2634,86 @@ const ACS_LANGUAGE_VARS = ['S1601_C02_003E', 'S1601_C01_004E', 'S1601_C01_008E',
 // once-per-decade dataset, not a rolling ACS 5-year estimate, so there's
 // no vintage-fallback list for this one the way there is above.
 const RACE_VARS = ['P1_001N', 'P1_003N', 'P1_004N', 'P1_005N', 'P1_006N', 'P1_007N', 'P1_008N', 'P1_009N'];
-// One request per (state, county) pulls every tract in that county at
-// once (`for=tract:*`) rather than one request per tract — a mission
-// spanning dozens of tracts across a handful of counties still only
-// costs a handful of requests this way. Shared by every ACS 5-Year pull
-// above (detail table, social-indicator subject vars, language subject
-// vars) — they all need the identical newest-to-oldest vintage fallback,
-// so it's written once here instead of three times.
-async function fetchAcsByCounty(datasetPath, vars, stateFips, countyFips) {
-  if (!CENSUS_API_KEY) {
-    // As of 2026 the Census Data API rejects every request — even the
-    // lightweight, occasional kind this feature makes — with a 400
-    // "Missing Key" response unless a key is attached. That used to be
-    // optional for low-volume use; it no longer is. Skip straight to
-    // "no data" instead of burning 5 failed requests per county, and say
-    // why in the console so this isn't a silent mystery next time.
-    console.warn(`[Census] CENSUS_API_KEY is not set — skipping ${datasetPath} query for state ${stateFips}/county ${countyFips} (free, instant signup at https://api.census.gov/data/key_signup.html). Related columns will be blank until a key is added.`);
-    return { year: null, byTract: new Map() };
-  }
+// Finds the single ACS 5-Year vintage to use for a county — tried
+// newest-to-oldest against total population (B01003), a variable that's
+// existed in every vintage and virtually guaranteed to be published for
+// any tract — then every other ACS pull for that county (households,
+// income/poverty/SNAP/disability/unemployment, language) reuses that
+// SAME confirmed year instead of independently rediscovering it. That
+// used to be four separate fallback loops that, in practice, almost
+// always landed on the same year (the Bureau publishes every ACS 5-Year
+// table for a release on the same day) — but "almost always" isn't
+// something the export's own "ACS 5-Year Vintage" column should have to
+// assume silently, especially now that it no longer doubles as the
+// vintage tag for a specific stat (median income moved to the S1903
+// pull below). One probe request per county, reused everywhere, makes
+// the column true by construction instead of true by coincidence.
+async function resolveAcsVintage(stateFips, countyFips) {
+  if (!CENSUS_API_KEY) return null;
   for (const year of CENSUS_ACS_YEARS) {
     try {
       const params = new URLSearchParams({
-        get: vars.join(','),
+        get: 'B01003_001E',
         for: 'tract:*',
         in:  `state:${stateFips}+county:${countyFips}`,
       });
       params.set('key', CENSUS_API_KEY);
-      const res = await fetch(`https://api.census.gov/data/${year}/${datasetPath}?${params}`);
-      if (!res.ok) {
-        // Log *why* — a 400 here is usually "Missing Key" (or an invalid
-        // key) rather than "this vintage isn't published yet", and those
-        // two failure modes look identical unless we print the body.
-        const bodyText = await res.text().catch(() => '');
-        console.warn(`[Census] ${year} ${datasetPath} query for state ${stateFips}/county ${countyFips} returned ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
-        continue; // try the next vintage back
-      }
-      const table = await res.json();
-      const byTract = new Map();
-      // Header row is [...vars, 'state', 'county', 'tract'] — the last
-      // three columns are always the geography, whatever vars were asked for.
-      table.slice(1).forEach(row => {
-        const geoVals = row.slice(-3); // [state, county, tract]
-        const dataVals = row.slice(0, vars.length);
-        byTract.set(geoVals.join(''), dataVals);
-      });
-      return { year, byTract };
+      const res = await fetch(`https://api.census.gov/data/${year}/acs/acs5?${params}`);
+      if (res.ok) return year;
     } catch (err) {
-      console.warn(`[Census] ${year} ${datasetPath} query failed for state ${stateFips}/county ${countyFips}:`, err);
+      console.warn(`[Census] ${year} vintage probe failed for state ${stateFips}/county ${countyFips}:`, err);
     }
   }
-  return { year: null, byTract: new Map() };
+  return null;
+}
+// One request per (state, county, dataset) pulls every tract in that
+// county at once (`for=tract:*`) rather than one request per tract — a
+// mission spanning dozens of tracts across a handful of counties still
+// only costs a handful of requests this way. Takes the vintage as a
+// fixed argument (from resolveAcsVintage above) rather than trying its
+// own fallback list, so every ACS pull for a county is guaranteed to
+// use the same year.
+async function fetchAcsForYear(datasetPath, vars, year, stateFips, countyFips) {
+  if (!CENSUS_API_KEY) {
+    // As of 2026 the Census Data API rejects every request — even the
+    // lightweight, occasional kind this feature makes — with a 400
+    // "Missing Key" response unless a key is attached. That used to be
+    // optional for low-volume use; it no longer is. Say why in the
+    // console so this isn't a silent mystery next time.
+    console.warn(`[Census] CENSUS_API_KEY is not set — skipping ${datasetPath} query for state ${stateFips}/county ${countyFips} (free, instant signup at https://api.census.gov/data/key_signup.html). Related columns will be blank until a key is added.`);
+    return new Map();
+  }
+  if (!year) return new Map(); // resolveAcsVintage couldn't find any published vintage for this county
+  try {
+    const params = new URLSearchParams({
+      get: vars.join(','),
+      for: 'tract:*',
+      in:  `state:${stateFips}+county:${countyFips}`,
+    });
+    params.set('key', CENSUS_API_KEY);
+    const res = await fetch(`https://api.census.gov/data/${year}/${datasetPath}?${params}`);
+    if (!res.ok) {
+      // Log *why* — a 400 here is usually "Missing Key" (or an invalid
+      // key) rather than "this table isn't part of this vintage", and
+      // those two failure modes look identical unless we print the body.
+      const bodyText = await res.text().catch(() => '');
+      console.warn(`[Census] ${year} ${datasetPath} query for state ${stateFips}/county ${countyFips} returned ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+      return new Map();
+    }
+    const table = await res.json();
+    const byTract = new Map();
+    // Header row is [...vars, 'state', 'county', 'tract'] — the last
+    // three columns are always the geography, whatever vars were asked for.
+    table.slice(1).forEach(row => {
+      const geoVals = row.slice(-3); // [state, county, tract]
+      const dataVals = row.slice(0, vars.length);
+      byTract.set(geoVals.join(''), dataVals);
+    });
+    return byTract;
+  } catch (err) {
+    console.warn(`[Census] ${year} ${datasetPath} query failed for state ${stateFips}/county ${countyFips}:`, err);
+    return new Map();
+  }
 }
 // The 2020 Census race counts (see RACE_VARS above) — one fixed dataset
 // and year, so no vintage-fallback loop is needed here.
@@ -2753,23 +2783,24 @@ async function attachCensusData(rows) {
   });
   await Promise.all(Array.from(byCounty.entries()).map(async ([key, groupRows]) => {
     const [state, county] = key.split('|');
-    const [detail, households, subject, language, race] = await Promise.all([
-      fetchAcsByCounty('acs/acs5', ACS_DETAIL_VARS, state, county),
-      fetchAcsByCounty('acs/acs5/subject', ACS_HOUSEHOLDS_VARS, state, county),
-      fetchAcsByCounty('acs/acs5/subject', ACS_SUBJECT_VARS, state, county),
-      fetchAcsByCounty('acs/acs5/subject', ACS_LANGUAGE_VARS, state, county),
+    const year = await resolveAcsVintage(state, county);
+    const [detailByTract, householdsByTract, subjectByTract, languageByTract, race] = await Promise.all([
+      fetchAcsForYear('acs/acs5', ACS_DETAIL_VARS, year, state, county),
+      fetchAcsForYear('acs/acs5/subject', ACS_HOUSEHOLDS_VARS, year, state, county),
+      fetchAcsForYear('acs/acs5/subject', ACS_SUBJECT_VARS, year, state, county),
+      fetchAcsForYear('acs/acs5/subject', ACS_LANGUAGE_VARS, year, state, county),
       fetchRaceByCounty(state, county),
     ]);
     groupRows.forEach(r => {
       const tractKey = `${r._state}${r._county}${r._tract}`;
-      const d = detail.byTract.get(tractKey) || [];
-      const h = households.byTract.get(tractKey) || [];
-      const s = subject.byTract.get(tractKey) || [];
-      const l = language.byTract.get(tractKey) || [];
+      const d = detailByTract.get(tractKey) || [];
+      const h = householdsByTract.get(tractKey) || [];
+      const s = subjectByTract.get(tractKey) || [];
+      const l = languageByTract.get(tractKey) || [];
       const rc = race.byTract.get(tractKey) || [];
       r.totalPopulation = acsNumberOrBlank(d[0]);        // B01003_001E
       r.medianYearBuilt = acsNumberOrBlank(d[1]);        // B25035_001E
-      r.acsVintage = detail.year || '';
+      r.acsVintage = year || '';
       r.totalHouseholds = acsNumberOrBlank(h[0]);        // S1101_C01_001E
       r.meanIncome = acsNumberOrBlank(s[0]);              // S1902_C03_001E
       r.medianIncome = acsNumberOrBlank(s[1]);            // S1903_C03_001E
