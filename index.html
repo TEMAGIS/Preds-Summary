@@ -219,6 +219,25 @@
   }
   .buft:hover, .bndt:hover { background: rgba(255,255,255,0.18); }
   .buft.active, .bndt.active { background: #fff; color: var(--tema-blue); border-color: #fff; }
+  /* Exports a mission-wide census-tract summary (added 2026-09-02) --
+     one row per tract with >=1 assessment in the CURRENT mission
+     (scopedAssets(), not getFiltered(), so a damage-level/search filter
+     the user has active doesn't shrink what's meant to be the mission's
+     full picture), each row's ACS 5-Year median household income
+     fetched live from the Census Bureau's public Data API. Sits below
+     #filter-grid (not inside it, since it isn't a filter control and
+     doesn't need to survive buildFilterGrid()'s innerHTML rebuilds). */
+  .tract-export-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    width: 100%; padding: 10px 14px; margin-top: 14px;
+    background: #fff; color: var(--tema-blue); border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 700; font-family: 'DM Sans', sans-serif;
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  .tract-export-btn:hover { opacity: 0.9; }
+  .tract-export-btn:active { opacity: 0.8; }
+  .tract-export-btn:disabled { opacity: 0.5; cursor: default; }
+  .tract-export-sub { font-size: 11px; font-weight: 600; opacity: 0.7; }
   /* ── Map ─────────────────────────────────────────────────── */
   #map-container { flex-shrink: 0; height: 36vh; position: relative; }
   #map { width: 100%; height: 100%; }
@@ -545,7 +564,7 @@
               fill="#ffffff">TN</text>
       </svg>
       <div>
-        <div class="login-title" id="login-title">Preliminary Damage Assessments (PREDS)</div>
+        <div class="login-title" id="login-title">Preliminary Damage Assessments (PREDS) Summary</div>
         <div class="login-sub">Sign in with your ArcGIS Online account to view preliminary damage assessments near your location.</div>
       </div>
     </div>
@@ -651,6 +670,10 @@
       <div class="active-filters" id="active-filters" aria-label="Active filters" aria-live="polite"></div>
       <div id="filter-drawer" aria-hidden="true" inert>
         <nav id="filter-grid" aria-label="Filter assessments by damage level and distance"></nav>
+        <button type="button" id="tract-export-btn" class="tract-export-btn" onclick="downloadTractSummary()">
+          <span id="tract-export-label">Download Census Tract Summary (CSV)</span>
+          <span class="tract-export-sub" id="tract-export-sub"></span>
+        </button>
       </div>
     </div>
     <div id="asset-list" role="list" aria-label="Assessment results"></div>
@@ -2446,6 +2469,258 @@ function computeBoundaryCounts(feature) {
   });
   return { total: matches.length, levels, unclassified, dwellingCounts };
 }
+// ════════════════════════════════════════════════════════════════
+//  CENSUS TRACT SUMMARY EXPORT — added 2026-09-02
+//  --------------------------------------------------------------
+//  Downloads one CSV row per census tract that has at least one
+//  assessment in the CURRENT mission (scopedAssets() — the same "for
+//  this mission" scope the rest of the app already uses, not
+//  getFiltered(), so an active damage-level/search filter doesn't
+//  silently shrink what's meant to be a full per-mission picture), with
+//  a total assessment count and that tract's ACS 5-Year median
+//  household income pulled live from the Census Bureau's public Data
+//  API (no key needed for this kind of light, manually-triggered use;
+//  CORS-enabled, so it's called directly from the browser).
+//
+//  Tract polygons come from the same public Census Tracts layer already
+//  used for the on-map boundary layer (BOUNDARY_LAYERS.tract) — that
+//  usage only ever queries the current map viewport (see the mode:
+//  'viewport' comment on BOUNDARY_LAYERS above), but a mission can span
+//  a bounding box far larger than any one viewport, so this fetches
+//  every tract intersecting the mission's full extent instead, paged
+//  the same way fetchAssets() above pages the main assessment query.
+// ════════════════════════════════════════════════════════════════
+function boundsOfAssets(list) {
+  if (!list.length) return null;
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  list.forEach(a => {
+    if (a.lat < minLat) minLat = a.lat;
+    if (a.lat > maxLat) maxLat = a.lat;
+    if (a.lng < minLng) minLng = a.lng;
+    if (a.lng > maxLng) maxLng = a.lng;
+  });
+  return { minLat, maxLat, minLng, maxLng };
+}
+async function fetchTractsForBounds(bounds) {
+  const cfg = BOUNDARY_LAYERS.tract;
+  const geometry = [bounds.minLng, bounds.minLat, bounds.maxLng, bounds.maxLat].join(',');
+  const outFields = 'TRACT_FIPS,FIPS,COUNTY_FIPS,STATE_ABBR,POPULATION';
+  const pageSize = 1000;
+  let offset = 0, more = true, safety = 50;
+  const all = [];
+  while (more && safety-- > 0) {
+    const params = new URLSearchParams({
+      where:             cfg.stateFilter || '1=1',
+      geometry,
+      geometryType:      'esriGeometryEnvelope',
+      inSR:              '4326',
+      spatialRel:        'esriSpatialRelIntersects',
+      outFields,
+      outSR:             '4326',
+      f:                 'geojson',
+      resultOffset:      String(offset),
+      resultRecordCount: String(pageSize),
+    });
+    const fc = await arcgisFetch(`${cfg.url}/query?${params}`);
+    const feats = fc.features || [];
+    all.push(...feats);
+    more = (fc.exceededTransferLimit === true) || (feats.length === pageSize);
+    offset += feats.length;
+    if (feats.length === 0) break;
+  }
+  return all;
+}
+// Joins every fetched tract against the mission's assessments, same
+// bbox-prefilter-then-ray-cast technique as computeBoundaryCounts()
+// above (reusing pointInGeoJsonGeometry() rather than re-deriving a
+// second point-in-polygon path) — tracts with zero matches are dropped
+// entirely per the "only export tracts with assessments" ask.
+function summarizeAssetsByTract(list, tractFeatures) {
+  const rows = [];
+  tractFeatures.forEach(feat => {
+    if (!feat.geometry) return;
+    const bounds = L.geoJSON(feat).getBounds();
+    const candidates = list.filter(a => bounds.contains([a.lat, a.lng]));
+    if (!candidates.length) return;
+    const count = candidates.filter(a => pointInGeoJsonGeometry(a.lat, a.lng, feat.geometry)).length;
+    if (count === 0) return;
+    const props = feat.properties || {};
+    rows.push({
+      geoid:       props.FIPS || '',
+      tractLabel:  formatTractNumber(props.TRACT_FIPS) || '',
+      countyFips:  props.COUNTY_FIPS || '',
+      stateAbbr:   props.STATE_ABBR || '',
+      population:  (props.POPULATION !== undefined && props.POPULATION !== null && props.POPULATION !== '') ? props.POPULATION : '',
+      count,
+    });
+  });
+  rows.sort((a, b) => b.count - a.count); // most-affected tracts first
+  return rows;
+}
+// Census Bureau's public ACS 5-Year Data API — no key required for
+// occasional, staff-triggered use like this (rate limits mainly target
+// high-volume automated use); CORS is enabled on this endpoint so it can
+// be called directly from the browser. Add a key here (see
+// https://api.census.gov/data/key_signup.html) if TEMA ever hits a rate
+// limit from this feature.
+const CENSUS_API_KEY = '';
+// B19013_001E = "Median household income in the past 12 months (in
+// inflation-adjusted dollars)", the standard ACS variable for this.
+// Tried newest-to-oldest rather than hardcoding one "current" vintage —
+// the Bureau typically publishes a new 5-year vintage each December, and
+// querying a not-yet-published year 404s/errors, so falling back keeps
+// this working across that release boundary with no code change needed.
+const CENSUS_ACS_YEARS = [2024, 2023, 2022, 2021, 2020];
+// One request per (state, county) pulls every tract in that county at
+// once (`for=tract:*`) rather than one request per tract — a mission
+// spanning dozens of tracts across a handful of counties still only
+// costs a handful of requests this way.
+async function fetchMedianIncomeByCounty(stateFips, countyFips) {
+  for (const year of CENSUS_ACS_YEARS) {
+    try {
+      const params = new URLSearchParams({
+        get: 'B19013_001E',
+        for: 'tract:*',
+        in:  `state:${stateFips}+county:${countyFips}`,
+      });
+      if (CENSUS_API_KEY) params.set('key', CENSUS_API_KEY);
+      const res = await fetch(`https://api.census.gov/data/${year}/acs/acs5?${params}`);
+      if (!res.ok) continue; // this vintage isn't published for this table/geography — try the next one back
+      const table = await res.json();
+      const byTract = new Map();
+      // First row is the header (["B19013_001E","state","county","tract"]) — the rest are data rows.
+      table.slice(1).forEach(r => {
+        const [income, state, county, tract] = r;
+        byTract.set(`${state}${county}${tract}`, income);
+      });
+      return { year, byTract };
+    } catch (err) {
+      console.warn(`[Census] ${year} ACS5 query failed for state ${stateFips}/county ${countyFips}:`, err);
+    }
+  }
+  return { year: null, byTract: new Map() };
+}
+// Mutates each row in place with medianIncome + acsVintage — grouped by
+// (state, county) parsed straight out of the tract's own GEOID (first 2
+// digits = state FIPS, next 3 = county FIPS, last 6 = tract code), so no
+// separate name-to-FIPS lookup is needed.
+async function attachMedianIncomes(rows) {
+  const byCounty = new Map();
+  rows.forEach(r => {
+    const geoid = String(r.geoid || '').trim();
+    if (geoid.length !== 11) { r.medianIncome = ''; r.acsVintage = ''; return; }
+    r._state = geoid.slice(0, 2);
+    r._county = geoid.slice(2, 5);
+    r._tract = geoid.slice(5, 11);
+    const key = `${r._state}|${r._county}`;
+    if (!byCounty.has(key)) byCounty.set(key, []);
+    byCounty.get(key).push(r);
+  });
+  await Promise.all(Array.from(byCounty.entries()).map(async ([key, groupRows]) => {
+    const [state, county] = key.split('|');
+    const { year, byTract } = await fetchMedianIncomeByCounty(state, county);
+    groupRows.forEach(r => {
+      const raw = byTract.get(`${r._state}${r._county}${r._tract}`);
+      const n = Number(raw);
+      // ACS marks suppressed/unavailable estimates with sentinel negative
+      // values (e.g. -666666666) — treat those as missing, not as data.
+      r.medianIncome = (raw !== undefined && raw !== null && Number.isFinite(n) && n >= 0) ? n : '';
+      r.acsVintage = year || '';
+    });
+  }));
+}
+function csvEscapeTract(val) {
+  const s = (val === null || val === undefined) ? '' : String(val);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function buildTractSummaryCsv(rows) {
+  const headers = ['GEOID', 'Census Tract', 'County FIPS', 'State', 'Tract Population (Esri Living Atlas)', 'Total Damage Assessments', 'Median Household Income (ACS 5-Year $)', 'ACS 5-Year Vintage'];
+  const lines = [headers.map(csvEscapeTract).join(',')];
+  rows.forEach(r => {
+    lines.push([r.geoid, r.tractLabel, r.countyFips, r.stateAbbr, r.population, r.count, r.medianIncome, r.acsVintage].map(csvEscapeTract).join(','));
+  });
+  return lines.join('\r\n');
+}
+function tractSummaryFilename() {
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  let missionPart = 'all-missions';
+  if (activeMission !== 'all') {
+    const m = missions.find(mm => mm.key === activeMission);
+    if (m && m.missionNum) missionPart = `mission-${m.missionNum}`;
+  }
+  return `tract-summary_${missionPart}_${stamp}.csv`;
+}
+// Same iframe-embed fallback Preds Mobile's own CSV export needed — a
+// sandboxed embedding iframe (e.g. ArcGIS Experience Builder's Embed
+// widget) commonly blocks a direct <a download> click's actual save
+// step with no JS-visible error, since Chrome treats that as a
+// "download" action requiring the 'allow-downloads' sandbox flag most
+// embed widgets don't set. Opening the CSV in a new tab instead is a
+// navigation, not a download, so it only needs 'allow-popups' — already
+// set on effectively every embed widget that opens outbound links in a
+// new tab.
+function isEmbeddedInIframe() {
+  try { return window.self !== window.top; } catch (err) { return true; }
+}
+function triggerCsvDownload(csv, filename) {
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }); // leading BOM so Excel reads UTF-8 correctly
+  const url = URL.createObjectURL(blob);
+  if (isEmbeddedInIframe()) {
+    const win = window.open(url, '_blank');
+    if (!win) alert('Your browser blocked the download popup. Please allow popups for this site, or open this app directly in its own browser tab instead of the embedded view, then try again.');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } else {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}
+async function downloadTractSummary() {
+  const btn = document.getElementById('tract-export-btn');
+  const label = document.getElementById('tract-export-label');
+  const sub = document.getElementById('tract-export-sub');
+  const list = scopedAssets();
+  if (!list.length) { alert('This mission has no assessments to summarize yet.'); return; }
+  const originalLabel = label.textContent;
+  btn.disabled = true;
+  label.textContent = 'Finding census tracts…';
+  sub.textContent = '';
+  try {
+    const bounds = boundsOfAssets(list);
+    const tractFeatures = await fetchTractsForBounds(bounds);
+    const rows = summarizeAssetsByTract(list, tractFeatures);
+    if (!rows.length) {
+      alert('Could not match any assessments to a census tract — the tract layer may be unavailable right now.');
+      return;
+    }
+    label.textContent = `Looking up median income for ${rows.length} tract${rows.length !== 1 ? 's' : ''}…`;
+    await attachMedianIncomes(rows);
+    const csv = buildTractSummaryCsv(rows);
+    triggerCsvDownload(csv, tractSummaryFilename());
+  } catch (err) {
+    console.error('[Tract Export] failed:', err);
+    alert('Could not build the tract summary — check your connection and try again.');
+  } finally {
+    btn.disabled = false;
+    label.textContent = originalLabel;
+    updateTractExportButton();
+  }
+}
+// Keeps the button's assessment-count subtitle in sync with the current
+// mission — called from renderList() so it updates on mission switch and
+// on every asset refresh, not just when the drawer happens to be open.
+function updateTractExportButton() {
+  const sub = document.getElementById('tract-export-sub');
+  if (!sub) return;
+  const n = scopedAssets().length;
+  sub.textContent = n ? `${n} assessment${n !== 1 ? 's' : ''} in this mission` : 'No assessments in this mission yet';
+  const btn = document.getElementById('tract-export-btn');
+  if (btn) btn.disabled = n === 0;
+}
 // Builds the boundary popup's header line(s) from whatever fields the
 // layer actually has — House/Senate have LongName ("District 1"),
 // Congress doesn't, so it falls back to "District {DISTRICT}" built
@@ -2542,6 +2817,7 @@ function getFiltered() {
 function renderList() {
   renderedList = getFiltered();
   document.getElementById('list-count').textContent = `${renderedList.length} assessment${renderedList.length !== 1 ? 's' : ''}`;
+  updateTractExportButton();
   const c = document.getElementById('asset-list');
   if (!renderedList.length) {
     const isFiltering = activeLevels.size > 0 || activeBuffer !== null || searchTerm;
