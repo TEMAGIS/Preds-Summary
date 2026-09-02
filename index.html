@@ -691,7 +691,7 @@
           <span id="tract-export-label">Download Census Tract Summary (CSV)</span>
           <span class="tract-export-sub" id="tract-export-sub"></span>
         </button>
-        <a id="tract-export-manual-link" class="tract-export-manual-link" hidden download target="_blank" rel="noopener">If the download didn't start, tap here to open the file</a>
+        <a id="tract-export-manual-link" class="tract-export-manual-link" hidden target="_blank" rel="noopener">If the download didn't start, tap here to open the file</a>
       </div>
     </div>
     <div id="asset-list" role="list" aria-label="Assessment results"></div>
@@ -2901,8 +2901,19 @@ function triggerCsvDownload(csv, filename) {
   a.remove();
   const link = document.getElementById('tract-export-manual-link');
   if (link) {
+    // Deliberately no `download` attribute/property on this fallback
+    // link. Confirmed in ArcGIS Experience Builder: a left-click on a
+    // download-attributed link still gets blocked (that sandboxed iframe
+    // doesn't grant `allow-downloads`, so even a genuine user click
+    // can't trigger the save), but right-click > "Open Link in New Tab"
+    // *does* work — Chrome's context-menu "open in new tab" ignores the
+    // `download` attribute and just navigates instead, which only needs
+    // popup permissions the embed does grant. Leaving `download` off
+    // entirely and relying on target="_blank" makes an ordinary
+    // left-click do exactly that automatically, so nobody has to
+    // discover the right-click trick. Filenames won't be as clean this
+    // way, but a click that just works beats a nicer name that doesn't.
     link.href = url;
-    link.download = filename;
     link.hidden = false;
   }
   // Held long enough for a manual click on the link above to still work,
