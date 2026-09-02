@@ -18,7 +18,7 @@
     if (p.get('layout') === 'full') document.documentElement.classList.add('layout-full');
   })();
 </script>
-<title>PREDS</title>
+<title>PREDS Summary</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -238,6 +238,23 @@
   .tract-export-btn:active { opacity: 0.8; }
   .tract-export-btn:disabled { opacity: 0.5; cursor: default; }
   .tract-export-sub { font-size: 11px; font-weight: 600; opacity: 0.7; }
+  /* Real, user-clickable link shown after every export attempt — kept
+     separate from the auto-triggered download in triggerCsvDownload()
+     (added 2026-09-02) because a click a person makes themselves on an
+     actual <a> is the most broadly compatible way to pull a file out of
+     a sandboxed embed (ArcGIS Experience Builder's Embed widget, the
+     AGOL item preview iframe, etc.); the auto-download alone silently
+     fails in some of those with no visible error, and an earlier
+     attempt to auto-open a fallback tab via window.open() turned out to
+     sometimes navigate the CURRENT page instead in some sandboxes,
+     leaving the app blank with nothing downloaded. This link never
+     programmatically navigates anything, so it can't cause that. */
+  .tract-export-manual-link {
+    display: block; text-align: center; margin-top: 8px;
+    font-size: 12px; font-weight: 600; color: #fff; text-decoration: underline;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .tract-export-manual-link[hidden] { display: none; }
   /* ── Map ─────────────────────────────────────────────────── */
   #map-container { flex-shrink: 0; height: 36vh; position: relative; }
   #map { width: 100%; height: 100%; }
@@ -613,7 +630,7 @@
                 font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="74"
                 fill="#ffffff">TN</text>
         </svg>
-        <h1 class="app-title-text">PREDS</h1>
+        <h1 class="app-title-text">PREDS Summary</h1>
       </div>
       <div class="header-pills">
         <button class="header-pill" onclick="showMissionScreen()" aria-label="Change mission" id="mission-pill">
@@ -674,6 +691,7 @@
           <span id="tract-export-label">Download Census Tract Summary (CSV)</span>
           <span class="tract-export-sub" id="tract-export-sub"></span>
         </button>
+        <a id="tract-export-manual-link" class="tract-export-manual-link" hidden download target="_blank" rel="noopener">If the download didn't start, tap here to open the file</a>
       </div>
     </div>
     <div id="asset-list" role="list" aria-label="Assessment results"></div>
@@ -2557,13 +2575,16 @@ function summarizeAssetsByTract(list, tractFeatures) {
   rows.sort((a, b) => b.count - a.count); // most-affected tracts first
   return rows;
 }
-// Census Bureau's public ACS 5-Year Data API — no key required for
-// occasional, staff-triggered use like this (rate limits mainly target
-// high-volume automated use); CORS is enabled on this endpoint so it can
-// be called directly from the browser. Add a key here (see
-// https://api.census.gov/data/key_signup.html) if TEMA ever hits a rate
-// limit from this feature.
-const CENSUS_API_KEY = '';
+// Census Bureau's public ACS 5-Year Data API — CORS is enabled on this
+// endpoint so it can be called directly from the browser, but as of 2026
+// the Bureau requires a key on EVERY request (confirmed live: a keyless
+// request now gets back a 400 "Missing Key" page, not data) — this used
+// to be optional for light use and no longer is. Median income and ACS
+// vintage will be blank in the export until a key is set here. Get a
+// free key (instant, just an email address) at
+// https://api.census.gov/data/key_signup.html and paste it between the
+// quotes below.
+const CENSUS_API_KEY = 'da15544938f3846147bc547b15f88413e7a4cf5d';
 // B19013_001E = "Median household income in the past 12 months (in
 // inflation-adjusted dollars)", the standard ACS variable for this.
 // Tried newest-to-oldest rather than hardcoding one "current" vintage —
@@ -2576,6 +2597,16 @@ const CENSUS_ACS_YEARS = [2024, 2023, 2022, 2021, 2020];
 // spanning dozens of tracts across a handful of counties still only
 // costs a handful of requests this way.
 async function fetchMedianIncomeByCounty(stateFips, countyFips) {
+  if (!CENSUS_API_KEY) {
+    // As of 2026 the Census Data API rejects every request — even the
+    // lightweight, occasional kind this feature makes — with a 400
+    // "Missing Key" response unless a key is attached. That used to be
+    // optional for low-volume use; it no longer is. Skip straight to
+    // "no data" instead of burning 5 failed requests per county, and say
+    // why in the console so this isn't a silent mystery next time.
+    console.warn('[Census] CENSUS_API_KEY is not set — the Census Data API now requires a key for every request (free, instant signup at https://api.census.gov/data/key_signup.html). Median income columns will be blank until a key is added.');
+    return { year: null, byTract: new Map() };
+  }
   for (const year of CENSUS_ACS_YEARS) {
     try {
       const params = new URLSearchParams({
@@ -2583,9 +2614,16 @@ async function fetchMedianIncomeByCounty(stateFips, countyFips) {
         for: 'tract:*',
         in:  `state:${stateFips}+county:${countyFips}`,
       });
-      if (CENSUS_API_KEY) params.set('key', CENSUS_API_KEY);
+      params.set('key', CENSUS_API_KEY);
       const res = await fetch(`https://api.census.gov/data/${year}/acs/acs5?${params}`);
-      if (!res.ok) continue; // this vintage isn't published for this table/geography — try the next one back
+      if (!res.ok) {
+        // Log *why* — a 400 here is usually "Missing Key" (or an invalid
+        // key) rather than "this vintage isn't published yet", and those
+        // two failure modes look identical unless we print the body.
+        const bodyText = await res.text().catch(() => '');
+        console.warn(`[Census] ${year} ACS5 query for state ${stateFips}/county ${countyFips} returned ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+        continue; // try the next vintage back
+      }
       const table = await res.json();
       const byTract = new Map();
       // First row is the header (["B19013_001E","state","county","tract"]) — the rest are data rows.
@@ -2650,34 +2688,40 @@ function tractSummaryFilename() {
   }
   return `tract-summary_${missionPart}_${stamp}.csv`;
 }
-// Same iframe-embed fallback Preds Mobile's own CSV export needed — a
-// sandboxed embedding iframe (e.g. ArcGIS Experience Builder's Embed
-// widget) commonly blocks a direct <a download> click's actual save
-// step with no JS-visible error, since Chrome treats that as a
-// "download" action requiring the 'allow-downloads' sandbox flag most
-// embed widgets don't set. Opening the CSV in a new tab instead is a
-// navigation, not a download, so it only needs 'allow-popups' — already
-// set on effectively every embed widget that opens outbound links in a
-// new tab.
-function isEmbeddedInIframe() {
-  try { return window.self !== window.top; } catch (err) { return true; }
-}
+// Always tries the normal one-tap download AND shows a plain, real,
+// user-clickable link — never a programmatic window.open()/navigation.
+// An earlier version branched on whether the app was embedded in an
+// iframe and, when embedded, called window.open(url, '_blank') as a
+// fallback (reasoning: an embedding sandbox that blocks the
+// 'allow-downloads' action needed for a real download often still
+// allows 'allow-popups'). In practice that sometimes navigated the
+// CURRENT page to the blob URL instead of opening a new tab — some
+// sandboxed embeds (the AGOL item "preview" iframe among them) redirect
+// a blocked/disallowed window.open() into the calling frame rather than
+// dropping it, which blanked out the whole app with nothing downloaded.
+// A link a person clicks themselves can't do that — clicking it either
+// downloads/opens the file, or (in a maximally locked-down sandbox) does
+// nothing, but it never replaces the app, so there's no failure mode
+// worse than "the link didn't do anything, try right-click > Save As".
 function triggerCsvDownload(csv, filename) {
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }); // leading BOM so Excel reads UTF-8 correctly
   const url = URL.createObjectURL(blob);
-  if (isEmbeddedInIframe()) {
-    const win = window.open(url, '_blank');
-    if (!win) alert('Your browser blocked the download popup. Please allow popups for this site, or open this app directly in its own browser tab instead of the embedded view, then try again.');
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-  } else {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  const link = document.getElementById('tract-export-manual-link');
+  if (link) {
+    link.href = url;
+    link.download = filename;
+    link.hidden = false;
   }
+  // Held long enough for a manual click on the link above to still work,
+  // rather than the 1s used when there was only ever the auto-download
+  // to worry about.
+  setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
 }
 async function downloadTractSummary() {
   const btn = document.getElementById('tract-export-btn');
@@ -2689,6 +2733,8 @@ async function downloadTractSummary() {
   btn.disabled = true;
   label.textContent = 'Finding census tracts…';
   sub.textContent = '';
+  const manualLink = document.getElementById('tract-export-manual-link');
+  if (manualLink) manualLink.hidden = true; // hide any stale link from a previous export while this one runs
   try {
     const bounds = boundsOfAssets(list);
     const tractFeatures = await fetchTractsForBounds(bounds);
