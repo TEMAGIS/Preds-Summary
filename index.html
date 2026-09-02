@@ -2592,11 +2592,52 @@ const CENSUS_API_KEY = 'da15544938f3846147bc547b15f88413e7a4cf5d';
 // querying a not-yet-published year 404s/errors, so falling back keeps
 // this working across that release boundary with no code change needed.
 const CENSUS_ACS_YEARS = [2024, 2023, 2022, 2021, 2020];
+// Every other ACS 5-Year variable this export pulls, verified one at a
+// time against the Bureau's own variable definitions (a wrong code
+// either 400s the whole request or silently returns the wrong column):
+//   B01003_001E        Total population                          (table B01003, detailed)
+//   B25035_001E        Median year structure built                (table B25035, detailed)
+//   S1101_C01_001E     Total households, Estimate                 (table S1101)
+//   S1902_C03_001E     Mean household income ($), Estimate         (table S1902)
+//   S1903_C03_001E     Median household income ($) — Households    (table S1903)
+//   S1701_C03_001E     Percent below poverty level, Estimate       (table S1701)
+//   S2201_C04_001E     Percent households receiving SNAP, Estimate (table S2201)
+//   S1810_C03_001E     Percent with a disability, Estimate         (table S1810)
+//   S2301_C04_001E     Unemployment rate, Estimate                 (table S2301)
+//   S1601_C02_003E     Percent speak a language other than English (table S1601)
+//   S1601_C01_004E     Speak Spanish at home, total, Estimate      (table S1601)
+//   S1601_C01_008E     Speak other Indo-European language, total   (table S1601)
+//   S1601_C01_012E     Speak Asian/Pacific Island language, total  (table S1601)
+// Split across three requests per county rather than one: the detailed
+// (B-prefixed) and subject (S-prefixed) variables live in different
+// Census datasets anyway (acs/acs5 vs acs/acs5/subject), and a single
+// combined 12-variable subject-table request was observed coming back
+// with only some of its columns populated — three smaller, individually
+// verified requests cost one extra round trip per county but avoid that
+// failure mode entirely.
+const ACS_DETAIL_VARS = ['B19013_001E', 'B01003_001E', 'B25035_001E'];
+// S1101_C01_001E (total households) is split into its own request: a
+// combined request asking for it alongside the other six subject-table
+// variables below was observed to reliably 400 (confirmed twice, on a
+// single tract), while the same six alone and S1101 alone or paired with
+// just one other both succeeded reliably — rather than chase exactly
+// which pairing the Bureau's validator objects to, it's cheaper and more
+// robust to just give it its own call.
+const ACS_HOUSEHOLDS_VARS = ['S1101_C01_001E'];
+const ACS_SUBJECT_VARS = ['S1902_C03_001E', 'S1903_C03_001E', 'S1701_C03_001E', 'S2201_C04_001E', 'S1810_C03_001E', 'S2301_C04_001E'];
+const ACS_LANGUAGE_VARS = ['S1601_C02_003E', 'S1601_C01_004E', 'S1601_C01_008E', 'S1601_C01_012E'];
+// 2020 Census (PL 94-171 redistricting data) race counts — a fixed,
+// once-per-decade dataset, not a rolling ACS 5-year estimate, so there's
+// no vintage-fallback list for this one the way there is above.
+const RACE_VARS = ['P1_001N', 'P1_003N', 'P1_004N', 'P1_005N', 'P1_006N', 'P1_007N', 'P1_008N', 'P1_009N'];
 // One request per (state, county) pulls every tract in that county at
 // once (`for=tract:*`) rather than one request per tract — a mission
 // spanning dozens of tracts across a handful of counties still only
-// costs a handful of requests this way.
-async function fetchMedianIncomeByCounty(stateFips, countyFips) {
+// costs a handful of requests this way. Shared by every ACS 5-Year pull
+// above (detail table, social-indicator subject vars, language subject
+// vars) — they all need the identical newest-to-oldest vintage fallback,
+// so it's written once here instead of three times.
+async function fetchAcsByCounty(datasetPath, vars, stateFips, countyFips) {
   if (!CENSUS_API_KEY) {
     // As of 2026 the Census Data API rejects every request — even the
     // lightweight, occasional kind this feature makes — with a 400
@@ -2604,49 +2645,101 @@ async function fetchMedianIncomeByCounty(stateFips, countyFips) {
     // optional for low-volume use; it no longer is. Skip straight to
     // "no data" instead of burning 5 failed requests per county, and say
     // why in the console so this isn't a silent mystery next time.
-    console.warn('[Census] CENSUS_API_KEY is not set — the Census Data API now requires a key for every request (free, instant signup at https://api.census.gov/data/key_signup.html). Median income columns will be blank until a key is added.');
+    console.warn(`[Census] CENSUS_API_KEY is not set — skipping ${datasetPath} query for state ${stateFips}/county ${countyFips} (free, instant signup at https://api.census.gov/data/key_signup.html). Related columns will be blank until a key is added.`);
     return { year: null, byTract: new Map() };
   }
   for (const year of CENSUS_ACS_YEARS) {
     try {
       const params = new URLSearchParams({
-        get: 'B19013_001E',
+        get: vars.join(','),
         for: 'tract:*',
         in:  `state:${stateFips}+county:${countyFips}`,
       });
       params.set('key', CENSUS_API_KEY);
-      const res = await fetch(`https://api.census.gov/data/${year}/acs/acs5?${params}`);
+      const res = await fetch(`https://api.census.gov/data/${year}/${datasetPath}?${params}`);
       if (!res.ok) {
         // Log *why* — a 400 here is usually "Missing Key" (or an invalid
         // key) rather than "this vintage isn't published yet", and those
         // two failure modes look identical unless we print the body.
         const bodyText = await res.text().catch(() => '');
-        console.warn(`[Census] ${year} ACS5 query for state ${stateFips}/county ${countyFips} returned ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+        console.warn(`[Census] ${year} ${datasetPath} query for state ${stateFips}/county ${countyFips} returned ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
         continue; // try the next vintage back
       }
       const table = await res.json();
       const byTract = new Map();
-      // First row is the header (["B19013_001E","state","county","tract"]) — the rest are data rows.
-      table.slice(1).forEach(r => {
-        const [income, state, county, tract] = r;
-        byTract.set(`${state}${county}${tract}`, income);
+      // Header row is [...vars, 'state', 'county', 'tract'] — the last
+      // three columns are always the geography, whatever vars were asked for.
+      table.slice(1).forEach(row => {
+        const geoVals = row.slice(-3); // [state, county, tract]
+        const dataVals = row.slice(0, vars.length);
+        byTract.set(geoVals.join(''), dataVals);
       });
       return { year, byTract };
     } catch (err) {
-      console.warn(`[Census] ${year} ACS5 query failed for state ${stateFips}/county ${countyFips}:`, err);
+      console.warn(`[Census] ${year} ${datasetPath} query failed for state ${stateFips}/county ${countyFips}:`, err);
     }
   }
   return { year: null, byTract: new Map() };
 }
-// Mutates each row in place with medianIncome + acsVintage — grouped by
-// (state, county) parsed straight out of the tract's own GEOID (first 2
-// digits = state FIPS, next 3 = county FIPS, last 6 = tract code), so no
-// separate name-to-FIPS lookup is needed.
-async function attachMedianIncomes(rows) {
+// The 2020 Census race counts (see RACE_VARS above) — one fixed dataset
+// and year, so no vintage-fallback loop is needed here.
+async function fetchRaceByCounty(stateFips, countyFips) {
+  if (!CENSUS_API_KEY) return { byTract: new Map() };
+  try {
+    const params = new URLSearchParams({
+      get: RACE_VARS.join(','),
+      for: 'tract:*',
+      in:  `state:${stateFips}+county:${countyFips}`,
+    });
+    params.set('key', CENSUS_API_KEY);
+    const res = await fetch(`https://api.census.gov/data/2020/dec/pl?${params}`);
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '');
+      console.warn(`[Census] 2020 dec/pl race query for state ${stateFips}/county ${countyFips} returned ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+      return { byTract: new Map() };
+    }
+    const table = await res.json();
+    const byTract = new Map();
+    table.slice(1).forEach(row => {
+      const geoVals = row.slice(-3);
+      const dataVals = row.slice(0, RACE_VARS.length);
+      byTract.set(geoVals.join(''), dataVals);
+    });
+    return { byTract };
+  } catch (err) {
+    console.warn(`[Census] 2020 dec/pl race query failed for state ${stateFips}/county ${countyFips}:`, err);
+    return { byTract: new Map() };
+  }
+}
+// ACS estimates mark a suppressed/unavailable cell with a sentinel
+// negative value (commonly -666666666, though the Bureau uses several
+// such codes) — genuine counts, percentages, dollar amounts and years
+// are never negative, so any negative reading is treated as missing
+// rather than as data. The 2020 Census (P1) counts don't use this
+// convention, but running them through the same guard is harmless.
+function acsNumberOrBlank(raw) {
+  const n = Number(raw);
+  return (raw !== undefined && raw !== null && Number.isFinite(n) && n >= 0) ? n : '';
+}
+function blankCensusFields() {
+  return {
+    medianIncome: '', totalPopulation: '', medianYearBuilt: '', acsVintage: '',
+    totalHouseholds: '', meanIncome: '', medianIncomeS1903: '', pctBelowPoverty: '',
+    pctSnap: '', pctDisability: '', unemploymentRate: '',
+    pctNonEnglish: '', spanishSpeakers: '', otherIndoEuroSpeakers: '', asianPacificSpeakers: '',
+    raceWhite: '', raceBlack: '', raceAmIndAlaska: '', raceAsian: '',
+    raceNativeHawaiianPacific: '', raceOther: '', raceTwoOrMore: '',
+  };
+}
+// Mutates each row in place with every Census field the tract-summary
+// export adds, grouped by (state, county) parsed straight out of the
+// tract's own GEOID (first 2 digits = state FIPS, next 3 = county FIPS,
+// last 6 = tract code), so no separate name-to-FIPS lookup is needed.
+async function attachCensusData(rows) {
   const byCounty = new Map();
   rows.forEach(r => {
     const geoid = String(r.geoid || '').trim();
-    if (geoid.length !== 11) { r.medianIncome = ''; r.acsVintage = ''; return; }
+    if (geoid.length !== 11) { Object.assign(r, blankCensusFields()); return; }
     r._state = geoid.slice(0, 2);
     r._county = geoid.slice(2, 5);
     r._tract = geoid.slice(5, 11);
@@ -2656,14 +2749,42 @@ async function attachMedianIncomes(rows) {
   });
   await Promise.all(Array.from(byCounty.entries()).map(async ([key, groupRows]) => {
     const [state, county] = key.split('|');
-    const { year, byTract } = await fetchMedianIncomeByCounty(state, county);
+    const [detail, households, subject, language, race] = await Promise.all([
+      fetchAcsByCounty('acs/acs5', ACS_DETAIL_VARS, state, county),
+      fetchAcsByCounty('acs/acs5/subject', ACS_HOUSEHOLDS_VARS, state, county),
+      fetchAcsByCounty('acs/acs5/subject', ACS_SUBJECT_VARS, state, county),
+      fetchAcsByCounty('acs/acs5/subject', ACS_LANGUAGE_VARS, state, county),
+      fetchRaceByCounty(state, county),
+    ]);
     groupRows.forEach(r => {
-      const raw = byTract.get(`${r._state}${r._county}${r._tract}`);
-      const n = Number(raw);
-      // ACS marks suppressed/unavailable estimates with sentinel negative
-      // values (e.g. -666666666) — treat those as missing, not as data.
-      r.medianIncome = (raw !== undefined && raw !== null && Number.isFinite(n) && n >= 0) ? n : '';
-      r.acsVintage = year || '';
+      const tractKey = `${r._state}${r._county}${r._tract}`;
+      const d = detail.byTract.get(tractKey) || [];
+      const h = households.byTract.get(tractKey) || [];
+      const s = subject.byTract.get(tractKey) || [];
+      const l = language.byTract.get(tractKey) || [];
+      const rc = race.byTract.get(tractKey) || [];
+      r.medianIncome = acsNumberOrBlank(d[0]);          // B19013_001E
+      r.totalPopulation = acsNumberOrBlank(d[1]);        // B01003_001E
+      r.medianYearBuilt = acsNumberOrBlank(d[2]);        // B25035_001E
+      r.acsVintage = detail.year || '';
+      r.totalHouseholds = acsNumberOrBlank(h[0]);        // S1101_C01_001E
+      r.meanIncome = acsNumberOrBlank(s[0]);             // S1902_C03_001E
+      r.medianIncomeS1903 = acsNumberOrBlank(s[1]);      // S1903_C03_001E
+      r.pctBelowPoverty = acsNumberOrBlank(s[2]);        // S1701_C03_001E
+      r.pctSnap = acsNumberOrBlank(s[3]);                // S2201_C04_001E
+      r.pctDisability = acsNumberOrBlank(s[4]);          // S1810_C03_001E
+      r.unemploymentRate = acsNumberOrBlank(s[5]);       // S2301_C04_001E
+      r.pctNonEnglish = acsNumberOrBlank(l[0]);          // S1601_C02_003E
+      r.spanishSpeakers = acsNumberOrBlank(l[1]);        // S1601_C01_004E
+      r.otherIndoEuroSpeakers = acsNumberOrBlank(l[2]);  // S1601_C01_008E
+      r.asianPacificSpeakers = acsNumberOrBlank(l[3]);   // S1601_C01_012E
+      r.raceWhite = acsNumberOrBlank(rc[1]);             // P1_003N
+      r.raceBlack = acsNumberOrBlank(rc[2]);             // P1_004N
+      r.raceAmIndAlaska = acsNumberOrBlank(rc[3]);       // P1_005N
+      r.raceAsian = acsNumberOrBlank(rc[4]);             // P1_006N
+      r.raceNativeHawaiianPacific = acsNumberOrBlank(rc[5]); // P1_007N
+      r.raceOther = acsNumberOrBlank(rc[6]);             // P1_008N
+      r.raceTwoOrMore = acsNumberOrBlank(rc[7]);         // P1_009N
     });
   }));
 }
@@ -2672,10 +2793,42 @@ function csvEscapeTract(val) {
   return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 function buildTractSummaryCsv(rows) {
-  const headers = ['GEOID', 'Census Tract', 'County FIPS', 'State', 'Tract Population (Esri Living Atlas)', 'Total Damage Assessments', 'Median Household Income (ACS 5-Year $)', 'ACS 5-Year Vintage'];
+  const headers = [
+    'GEOID', 'Census Tract', 'County FIPS', 'State',
+    'Tract Population (Esri Living Atlas)', 'Total Damage Assessments',
+    'Median Household Income (ACS 5-Year $)', 'ACS 5-Year Vintage',
+    'Total Population (ACS 5-Yr Estimate)',
+    'Total Households (ACS 5-Yr Estimate)',
+    'Mean Household Income (ACS 5-Yr Estimate, $)',
+    'Median Household Income — S1903 (ACS 5-Yr Estimate, $)',
+    'Percent Below Poverty Level (ACS 5-Yr Estimate)',
+    'Percent Households Receiving SNAP/Food Stamps (ACS 5-Yr Estimate)',
+    'Percent With a Disability (ACS 5-Yr Estimate)',
+    'Unemployment Rate (ACS 5-Yr Estimate)',
+    'Median Year Structure Built (ACS 5-Yr Estimate)',
+    'Percent Speak a Language Other Than English (ACS 5-Yr Estimate)',
+    'Speak Spanish at Home (ACS 5-Yr Estimate)',
+    'Speak Other Indo-European Language at Home (ACS 5-Yr Estimate)',
+    'Speak Asian or Pacific Island Language at Home (ACS 5-Yr Estimate)',
+    'Population: White Alone (2020 Census)',
+    'Population: Black or African American Alone (2020 Census)',
+    'Population: American Indian and Alaska Native Alone (2020 Census)',
+    'Population: Asian Alone (2020 Census)',
+    'Population: Native Hawaiian and Other Pacific Islander Alone (2020 Census)',
+    'Population: Some Other Race Alone (2020 Census)',
+    'Population: Two or More Races (2020 Census)',
+  ];
   const lines = [headers.map(csvEscapeTract).join(',')];
   rows.forEach(r => {
-    lines.push([r.geoid, r.tractLabel, r.countyFips, r.stateAbbr, r.population, r.count, r.medianIncome, r.acsVintage].map(csvEscapeTract).join(','));
+    lines.push([
+      r.geoid, r.tractLabel, r.countyFips, r.stateAbbr, r.population, r.count,
+      r.medianIncome, r.acsVintage,
+      r.totalPopulation, r.totalHouseholds, r.meanIncome, r.medianIncomeS1903,
+      r.pctBelowPoverty, r.pctSnap, r.pctDisability, r.unemploymentRate,
+      r.medianYearBuilt,
+      r.pctNonEnglish, r.spanishSpeakers, r.otherIndoEuroSpeakers, r.asianPacificSpeakers,
+      r.raceWhite, r.raceBlack, r.raceAmIndAlaska, r.raceAsian, r.raceNativeHawaiianPacific, r.raceOther, r.raceTwoOrMore,
+    ].map(csvEscapeTract).join(','));
   });
   return lines.join('\r\n');
 }
@@ -2743,8 +2896,8 @@ async function downloadTractSummary() {
       alert('Could not match any assessments to a census tract — the tract layer may be unavailable right now.');
       return;
     }
-    label.textContent = `Looking up median income for ${rows.length} tract${rows.length !== 1 ? 's' : ''}…`;
-    await attachMedianIncomes(rows);
+    label.textContent = `Looking up Census data for ${rows.length} tract${rows.length !== 1 ? 's' : ''}…`;
+    await attachCensusData(rows);
     const csv = buildTractSummaryCsv(rows);
     triggerCsvDownload(csv, tractSummaryFilename());
   } catch (err) {
