@@ -2585,21 +2585,25 @@ function summarizeAssetsByTract(list, tractFeatures) {
 // https://api.census.gov/data/key_signup.html and paste it between the
 // quotes below.
 const CENSUS_API_KEY = 'da15544938f3846147bc547b15f88413e7a4cf5d';
-// B19013_001E = "Median household income in the past 12 months (in
-// inflation-adjusted dollars)", the standard ACS variable for this.
-// Tried newest-to-oldest rather than hardcoding one "current" vintage —
-// the Bureau typically publishes a new 5-year vintage each December, and
-// querying a not-yet-published year 404s/errors, so falling back keeps
-// this working across that release boundary with no code change needed.
+// The Bureau typically publishes a new ACS 5-year vintage each December,
+// and querying a not-yet-published year 404s/errors — trying
+// newest-to-oldest rather than hardcoding one "current" vintage keeps
+// every ACS pull below working across that release boundary with no
+// code change needed.
 const CENSUS_ACS_YEARS = [2024, 2023, 2022, 2021, 2020];
-// Every other ACS 5-Year variable this export pulls, verified one at a
-// time against the Bureau's own variable definitions (a wrong code
-// either 400s the whole request or silently returns the wrong column):
+// Every ACS 5-Year variable this export pulls, verified one at a time
+// against the Bureau's own variable definitions (a wrong code either
+// 400s the whole request or silently returns the wrong column):
 //   B01003_001E        Total population                          (table B01003, detailed)
 //   B25035_001E        Median year structure built                (table B25035, detailed)
 //   S1101_C01_001E     Total households, Estimate                 (table S1101)
 //   S1902_C03_001E     Mean household income ($), Estimate         (table S1902)
-//   S1903_C03_001E     Median household income ($) — Households    (table S1903)
+//   S1903_C03_001E     Median household income ($) — Households    (table S1903; the
+//                      overall-total row, computed from the same ACS estimate
+//                      B19013 reports — kept from the S-table family for
+//                      consistency with the other subject-table stats below,
+//                      rather than pulling that one figure from a detailed
+//                      table instead)
 //   S1701_C03_001E     Percent below poverty level, Estimate       (table S1701)
 //   S2201_C04_001E     Percent households receiving SNAP, Estimate (table S2201)
 //   S1810_C03_001E     Percent with a disability, Estimate         (table S1810)
@@ -2615,7 +2619,7 @@ const CENSUS_ACS_YEARS = [2024, 2023, 2022, 2021, 2020];
 // with only some of its columns populated — three smaller, individually
 // verified requests cost one extra round trip per county but avoid that
 // failure mode entirely.
-const ACS_DETAIL_VARS = ['B19013_001E', 'B01003_001E', 'B25035_001E'];
+const ACS_DETAIL_VARS = ['B01003_001E', 'B25035_001E'];
 // S1101_C01_001E (total households) is split into its own request: a
 // combined request asking for it alongside the other six subject-table
 // variables below was observed to reliably 400 (confirmed twice, on a
@@ -2724,7 +2728,7 @@ function acsNumberOrBlank(raw) {
 function blankCensusFields() {
   return {
     medianIncome: '', totalPopulation: '', medianYearBuilt: '', acsVintage: '',
-    totalHouseholds: '', meanIncome: '', medianIncomeS1903: '', pctBelowPoverty: '',
+    totalHouseholds: '', meanIncome: '', pctBelowPoverty: '',
     pctSnap: '', pctDisability: '', unemploymentRate: '',
     pctNonEnglish: '', spanishSpeakers: '', otherIndoEuroSpeakers: '', asianPacificSpeakers: '',
     raceWhite: '', raceBlack: '', raceAmIndAlaska: '', raceAsian: '',
@@ -2763,13 +2767,12 @@ async function attachCensusData(rows) {
       const s = subject.byTract.get(tractKey) || [];
       const l = language.byTract.get(tractKey) || [];
       const rc = race.byTract.get(tractKey) || [];
-      r.medianIncome = acsNumberOrBlank(d[0]);          // B19013_001E
-      r.totalPopulation = acsNumberOrBlank(d[1]);        // B01003_001E
-      r.medianYearBuilt = acsNumberOrBlank(d[2]);        // B25035_001E
+      r.totalPopulation = acsNumberOrBlank(d[0]);        // B01003_001E
+      r.medianYearBuilt = acsNumberOrBlank(d[1]);        // B25035_001E
       r.acsVintage = detail.year || '';
       r.totalHouseholds = acsNumberOrBlank(h[0]);        // S1101_C01_001E
-      r.meanIncome = acsNumberOrBlank(s[0]);             // S1902_C03_001E
-      r.medianIncomeS1903 = acsNumberOrBlank(s[1]);      // S1903_C03_001E
+      r.meanIncome = acsNumberOrBlank(s[0]);              // S1902_C03_001E
+      r.medianIncome = acsNumberOrBlank(s[1]);            // S1903_C03_001E
       r.pctBelowPoverty = acsNumberOrBlank(s[2]);        // S1701_C03_001E
       r.pctSnap = acsNumberOrBlank(s[3]);                // S2201_C04_001E
       r.pctDisability = acsNumberOrBlank(s[4]);          // S1810_C03_001E
@@ -2796,11 +2799,11 @@ function buildTractSummaryCsv(rows) {
   const headers = [
     'GEOID', 'Census Tract', 'County FIPS', 'State',
     'Tract Population (Esri Living Atlas)', 'Total Damage Assessments',
-    'Median Household Income (ACS 5-Year $)', 'ACS 5-Year Vintage',
+    'ACS 5-Year Vintage',
     'Total Population (ACS 5-Yr Estimate)',
     'Total Households (ACS 5-Yr Estimate)',
     'Mean Household Income (ACS 5-Yr Estimate, $)',
-    'Median Household Income — S1903 (ACS 5-Yr Estimate, $)',
+    'Median Household Income (ACS 5-Yr Estimate, $)',
     'Percent Below Poverty Level (ACS 5-Yr Estimate)',
     'Percent Households Receiving SNAP/Food Stamps (ACS 5-Yr Estimate)',
     'Percent With a Disability (ACS 5-Yr Estimate)',
@@ -2822,8 +2825,8 @@ function buildTractSummaryCsv(rows) {
   rows.forEach(r => {
     lines.push([
       r.geoid, r.tractLabel, r.countyFips, r.stateAbbr, r.population, r.count,
-      r.medianIncome, r.acsVintage,
-      r.totalPopulation, r.totalHouseholds, r.meanIncome, r.medianIncomeS1903,
+      r.acsVintage,
+      r.totalPopulation, r.totalHouseholds, r.meanIncome, r.medianIncome,
       r.pctBelowPoverty, r.pctSnap, r.pctDisability, r.unemploymentRate,
       r.medianYearBuilt,
       r.pctNonEnglish, r.spanishSpeakers, r.otherIndoEuroSpeakers, r.asianPacificSpeakers,
